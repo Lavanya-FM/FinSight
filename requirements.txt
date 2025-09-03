@@ -8,8 +8,6 @@ xgboost
 spacy
 scipy
 fuzzywuzzy
-pytesseract
-pdf2image
 pillow
 chardet
 PyMuPDF
@@ -19,7 +17,6 @@ streamlit
 pdfplumber
 opencv-python
 setuptools
-PyMuPDF
 paddleocr
 joblib
 fpdf2
@@ -27,15 +24,10 @@ matplotlib
 reportlab
 faker
 dill
-px
 gspread
 oauth2client
 plotly
 cryptography
-
-# paddlepaddle special install command (run separately):
-# pip install paddlepaddle -i https://mirror.baidu.com/pypi/simple
-
 transformers
 torch
 seaborn
@@ -45,6 +37,3 @@ psycopg2-binary
 supabase
 werkzeug
 passlib[bcrypt]
-PyGObject
-python-poppler
-pycario
