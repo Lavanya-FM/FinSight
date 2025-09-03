@@ -9,7 +9,7 @@ import json
 import time
 from datetime import datetime
 from services.base import client ,ensure_bucket , ensure_session# Import client from services.base
-from utils.visualizer import analyze_file 
+from visualizer import analyze_file 
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, filename='app.log', filemode='a', format='%(asctime)s - %(levelname)s - %(message)s')

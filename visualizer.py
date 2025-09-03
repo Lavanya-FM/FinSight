@@ -1,3 +1,4 @@
+# visualizer.py
 import os
 import re
 import json
@@ -11,37 +12,10 @@ import numpy as np
 import streamlit as st
 from datetime import datetime
 from pathlib import Path
-
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
-
-
-# Try to import project utils; if not available, fallback to simple helpers
-from utils.text_parser import parse_bank_statement_text
-from utils.categorize_transactions import categorize_transactions, TransactionCategorizer
-from utils.financial_metrics import calculate_metrics, identify_high_value_transactions, recurring_transactions, enforce_schema, make_arrow_compatible
-from utils.score_bank_statements import score_and_decide
-from utils.extract_transactions import extract_df_from_scanned_pdf
-from utils.preprocess_transactions import make_arrow_compatible
-from utils.plotting import (
-    plot_income_trend_plotly,
-    plot_surplus_trend_plotly,
-    plot_income_vs_expenses_plotly,
-    plot_cumulative_savings_plotly,
-    plot_category_breakdown_plotly,
-    plot_high_risk_timeline,
-    plot_cibil_gauge,
-    plot_credit_debit_ratio_trend_plotly,
-    plot_category_expenses_over_time_plotly,
-    plot_top_expenses_pareto_plotly,
-    plot_income_expense_scatter_plotly,
-    plot_monthly_transaction_volume_by_category_plotly
-    )
-
-import logging
-# Ensure Plotly browser cleanup
 import plotly.io as pio
 from contextlib import contextmanager
 
@@ -50,7 +24,7 @@ logging.basicConfig(level=logging.INFO, filename='app.log', filemode='a',
                     format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Helpers
+# Helper functions
 def ensure_dir(path):
     path = Path(path)
     path.mkdir(parents=True, exist_ok=True)
@@ -64,14 +38,12 @@ def standardize_columns(df):
         'date': 'Date', 'transaction date': 'Date',
         'description': 'Description', 'narration': 'Description', 'particulars': 'Description',
         'amount': 'Amount', 'type': 'Type', 'category': 'Category',
-        'confidence': 'Confidence' 
+        'confidence': 'Confidence'
     }
-
     unmapped = [col for col in df.columns if col not in mapping.values()]
     if unmapped:
         logger.warning(f"Unmapped columns in DataFrame: {unmapped}")
     df.columns = [mapping.get(c.lower().strip(), c) for c in df.columns]
-
     for col in ['Debit', 'Credit', 'Balance', 'Amount']:
         if col in df.columns:
             df[col] = df[col].astype(str).str.replace(r'[₹,\s]', '', regex=True)
@@ -140,7 +112,6 @@ def enforce_metrics_schema(df):
         df['MonthStart'] = df['MonthStart'].astype(str)
     return df
 
-# --------------- Improved fallback parser ---------------
 def basic_parse_text_to_df(text):
     lines = [l.rstrip() for l in text.splitlines() if l.strip()]
     records = []
@@ -207,8 +178,6 @@ def basic_parse_text_to_df(text):
     return df[["Date", "Description", "Debit", "Credit", "Balance"]]
 
 def parse_pdf_to_df(pdf_path):
-    if fitz is None:
-        raise RuntimeError("PyMuPDF (fitz) not installed; install with `pip install pymupdf`.")
     text = ""
     try:
         with fitz.open(pdf_path) as doc:
@@ -216,24 +185,10 @@ def parse_pdf_to_df(pdf_path):
                 text += page.get_text("text") + "\n"
     except FileNotFoundError as e:
         print(f"PDF file not found: {e}")
-        # Proceed with empty text for fallback
+        return pd.DataFrame(columns=["Date", "Description", "Debit", "Credit", "Balance"])
     except Exception as e:
         print(f"Unexpected error opening PDF: {e}")
-        # Proceed with empty text for fallback
-
-    if parse_bank_statement_text:
-        try:
-            df = parse_bank_statement_text(text)
-            df = standardize_columns(df)
-            if 'Date' in df.columns:
-                df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
-                df["Date"] = df["Date"].fillna(pd.Timestamp("2025-01-01"))
-            else:
-                print("Warning: No 'Date' column after advanced parsing. Returning empty DataFrame.")
-                return pd.DataFrame(columns=["Date", "Description", "Debit", "Credit", "Balance"])
-            return df
-        except Exception:
-            pass
+        return pd.DataFrame(columns=["Date", "Description", "Debit", "Credit", "Balance"])
     df = basic_parse_text_to_df(text)
     df = standardize_columns(df)
     if 'Date' in df.columns:
@@ -242,16 +197,8 @@ def parse_pdf_to_df(pdf_path):
     else:
         print("Warning: No 'Date' column after basic parsing. Returning empty DataFrame.")
         return pd.DataFrame(columns=["Date", "Description", "Debit", "Credit", "Balance"])
-    if text.strip():
-        df = parse_bank_statement_text(text)
-        logger.info(f"[DEBUG] Parsed DataFrame from text, shape: {df.shape}, columns: {df.columns.tolist()}")
-    else:
-        logger.warning("[DEBUG] No text extracted from PDF, attempting OCR...")
-        df = extract_df_from_scanned_pdf(pdf_path)
-        logger.info(f"[DEBUG] OCR DataFrame shape: {df.shape}, columns: {df.columns.tolist()}")
     return df
 
-# --------------- Categorization ---------------
 def simple_categorize(df):
     df = df.copy()
     def cat(desc):
@@ -270,7 +217,6 @@ def simple_categorize(df):
     df["Category"] = df["Description"].fillna("").apply(cat).astype(str)
     return df
 
-# --------------- ML model integration ---------------
 def load_model(model_path):
     model_path = Path(model_path)
     if not model_path.exists():
@@ -283,35 +229,15 @@ def load_model(model_path):
         print("Failed to load ML model:", e)
         return None
 
-def prepare_features_for_model(model, metrics_df):
-    expected_features = ["Average Monthly Income", "Average Monthly Expenses", "Average Monthly EMI",
-                        "Net Surplus", "DTI Ratio", "Savings Rate", "Red Flag Count", "Credit Utilization",
-                        "Discretionary Expenses", "Income Stability"]
-    if isinstance(metrics_df, dict):
-        metrics_df = pd.DataFrame([metrics_df])
-    elif not isinstance(metrics_df, pd.DataFrame):
-        raise ValueError("metrics_df must be dict or DataFrame")
-    metrics_df = ensure_numeric(metrics_df, expected_features)
-    feature_names = getattr(model, "feature_names_in_", expected_features)
-    X = []
-    for fn in feature_names:
-        val = metrics_df.iloc[0].get(fn, 0.0)
-        try:
-            val = float(val) if not pd.isna(val) else 0.0
-        except:
-            val = 0.0
-        X.append(val)
-    return np.array(X).reshape(1, -1), feature_names
-
 def model_predict_and_explain(model, metrics_df):
     try:
-        expected_features = ["Average Monthly Income", "Average Monthly Expenses", "Average Monthly EMI",
-                        "Net Surplus", "DTI Ratio", "Savings Rate", "Red Flag Count", "Credit Utilization",
-                        "Discretionary Expenses", "Income Stability"]
+        expected_features = [
+            "Average Monthly Income", "Average Monthly Expenses", "Average Monthly EMI",
+            "Net Surplus", "DTI Ratio", "Savings Rate", "Red Flag Count", "Credit Utilization",
+            "Discretionary Expenses", "Income Stability"
+        ]
         print(f"[DEBUG] Expected ML model features: {expected_features}")
         print(f"[DEBUG] Available columns in metrics_df: {list(metrics_df.columns)}")
-        
-        # Extract features with validation
         features = []
         for feature in expected_features:
             if feature in metrics_df.columns:
@@ -324,16 +250,11 @@ def model_predict_and_explain(model, metrics_df):
             else:
                 print(f"[WARNING] Missing feature {feature} in metrics_df, using 0.0")
                 features.append(0.0)
-        
         print(f"[DEBUG] ML model input features: {dict(zip(expected_features, features))}")
-        
-        # Check feature count compatibility
         expected_feature_count = getattr(model, "n_features_in_", len(expected_features))
         if len(features) != expected_feature_count:
             print(f"[WARNING] Feature count mismatch: model expects {expected_feature_count}, got {len(features)}")
             features = features[:expected_feature_count] + [0.0] * (expected_feature_count - len(features)) if len(features) < expected_feature_count else features[:expected_feature_count]
-        
-        # Make prediction
         prediction = model.predict([features])[0]
         prob = model.predict_proba([features])[0] if hasattr(model, "predict_proba") else [0.5, 0.5]
         ml_result = {
@@ -347,7 +268,6 @@ def model_predict_and_explain(model, metrics_df):
         print(f"[ERROR] ML model prediction failed: {e}")
         return None
 
-# --------------- CSV export ---------------
 def export_raw_csv(df, out_csv):
     df = df.copy()
     df["Date"] = pd.to_datetime(df["Date"], errors='coerce').fillna(pd.Timestamp("2025-01-01"))
@@ -358,16 +278,108 @@ def export_raw_csv(df, out_csv):
     df.to_csv(out_csv, index=False, date_format='%Y-%m-%d')
     return out_csv
 
-# --------------- Main pipeline ---------------
+# Placeholder functions for dependencies previously in utils
+def parse_bank_statement_text(text):
+    return basic_parse_text_to_df(text)
+
+class TransactionCategorizer:
+    def __init__(self):
+        self.vectorizer = None
+        self.classifier = None
+
+    def load_model(self, vectorizer_path, classifier_path):
+        self.vectorizer = load_model(vectorizer_path)
+        self.classifier = load_model(classifier_path)
+
+def categorize_transactions(df, tc, model_type="hybrid", add_confidence=True):
+    return simple_categorize(df)
+
+def calculate_metrics(df, output_path):
+    monthly = df.set_index("Date").groupby(pd.Grouper(freq="M")).agg(
+        Income=("Credit", "sum"), Expenses=("Debit", "sum"))
+    avg_income = monthly["Income"].mean() if not monthly.empty else 0.0
+    avg_expenses = monthly["Expenses"].mean() if not monthly.empty else 0.0
+    net_surplus = avg_income - avg_expenses
+    return pd.DataFrame([{
+        "Average Monthly Income": avg_income,
+        "Average Monthly Expenses": avg_expenses,
+        "Net Surplus": net_surplus,
+        "DTI Ratio": 0.0,
+        "Savings Rate": 0.0,
+        "Red Flag Count": int((df["Category"] == "Red Flags").sum()),
+        "Credit Utilization": 0.0,
+        "Discretionary Expenses": df[df["Category"] == "Discretionary Expenses"]["Debit"].sum(),
+        "Income Stability": 0
+    }])
+
+def identify_high_value_transactions(df):
+    return df["Debit"].gt(df["Debit"].mean() + 2 * df["Debit"].std()) | \
+           df["Credit"].gt(df["Credit"].mean() + 2 * df["Credit"].std())
+
+def recurring_transactions(df):
+    return df["Description"].value_counts().gt(2)[df["Description"]].values
+
+def enforce_schema(df):
+    return enforce_metrics_schema(df)
+
+def make_arrow_compatible(df):
+    return df
+
+def score_and_decide(metrics_df, cibil_score, categorized_file):
+    avg_income = metrics_df['Average Monthly Income'].iloc[0]
+    red_flags = metrics_df['Red Flag Count'].iloc[0]
+    if avg_income >= 30000 and red_flags == 0 and cibil_score >= 650:
+        return {"Action": "Approve", "Reason": "Good income and credit profile", "Total Score": 80}
+    return {"Action": "Reject", "Reason": "Insufficient income or credit issues", "Total Score": 40}
+
+def extract_df_from_scanned_pdf(pdf_path):
+    return pd.DataFrame(columns=["Date", "Description", "Debit", "Credit", "Balance"])
+
+# Placeholder plotting functions
+def plot_income_trend_plotly(df):
+    return None
+
+def plot_surplus_trend_plotly(df):
+    return None
+
+def plot_income_vs_expenses_plotly(df):
+    return None
+
+def plot_cumulative_savings_plotly(df):
+    return None
+
+def plot_category_breakdown_plotly(df):
+    return None
+
+def plot_high_risk_timeline(df, output_path):
+    return None
+
+def plot_cibil_gauge(cibil_score, output_path):
+    return None
+
+def plot_credit_debit_ratio_trend_plotly(df):
+    return None
+
+def plot_category_expenses_over_time_plotly(df):
+    return None
+
+def plot_top_expenses_pareto_plotly(df):
+    return None
+
+def plot_income_expense_scatter_plotly(df):
+    return None
+
+def plot_monthly_transaction_volume_by_category_plotly(df):
+    return None
+
 def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_dir="outputs", applicant_data=None):
-    # Initialize default output dictionary
     out = {
         "raw_csv": None,
         "categorized_csv": None,
         "metrics_csv": None,
         "plots": [],
         "html_path": None,
-        "pdf_path": None, # Changed to pdf_report for PDF-only output
+        "pdf_path": None,
         "decision_json": None,
         "metrics_df": pd.DataFrame(),
         "transactions_df": pd.DataFrame(),
@@ -383,12 +395,10 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
         decisions_dir = ensure_dir(out_dir / "loan_decisions")
         reports_dir = ensure_dir(out_dir / "reports")
 
-        # Validate or default CIBIL score
         if cibil_score is not None and (not isinstance(cibil_score, (int, float)) or cibil_score < 300 or cibil_score > 900):
             raise ValueError("CIBIL score must be a number between 300 and 900")
-        cibil_score = cibil_score if cibil_score is not None else 700  # Default for testing
+        cibil_score = cibil_score if cibil_score is not None else 700
 
-        # Ensure applicant_data is a dictionary with defaults
         if applicant_data is None:
             applicant_data = {"name": Path(input_path).stem, "account_number": "Unknown"}
         else:
@@ -397,7 +407,6 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
                 "account_number": applicant_data.get("account_number", "Unknown")
             }
 
-        # 1) Extract
         print("[1/8] Extracting transactions...")
         df = None
         if input_path.suffix.lower() == ".pdf":
@@ -419,17 +428,14 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
         else:
             raise ValueError("Unsupported file type; supported: pdf, csv, xlsx, txt")
 
-        # Process Date column
         if "Date" in df.columns:
             df["Date"] = pd.to_datetime(df["Date"], errors='coerce').fillna(pd.Timestamp("2025-01-01")).dt.strftime('%Y-%m-%d')
             df = df.dropna(subset=["Date"]).reset_index(drop=True)
 
-        # Export raw CSV
         raw_csv_path = raw_dir / f"{input_path.stem}_raw.csv"
         export_raw_csv(df, raw_csv_path)
         print(f"Exported raw CSV: {raw_csv_path}")
 
-        # Standardize and ensure required columns
         df = standardize_columns(df)
         for col in ["Debit", "Credit", "Balance"]:
             if col not in df.columns:
@@ -440,36 +446,26 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
 
         df = make_arrow_compatible(df)
 
-        # 2) Categorize transactions
         print("[2/8] Categorizing transactions...")
         categorized_csv_path = categorized_dir / f"{input_path.stem}_categorized.csv"
         categorized_df = None
-
         try:
-            # Initialize TransactionCategorizer early
             vectorizer_path = Path("models/vectorizer.pkl")
             classifier_path = Path("models/classifier.pkl")
             tc = TransactionCategorizer()
-
             if vectorizer_path.exists() and classifier_path.exists():
                 tc.load_model(vectorizer_path, classifier_path)
             else:
-                print("[WARNING] Model files not found, training TransactionCategorizer with default data...")
-
-            # Try advanced categorization with tc
+                print("[WARNING] Model files not found, using simple categorization...")
             categorized_df = categorize_transactions(df, tc, model_type="hybrid", add_confidence=True)
-
-            # Ensure DataFrame is valid
             if categorized_df is None or categorized_df.empty:
                 print("categorize_transactions produced empty/invalid DataFrame, falling back to simple_categorize.")
                 categorized_df = simple_categorize(df)
-
         except Exception as e:
             print(f"Categorization error: {e}")
             logger.error(f"Categorization error: {e}")
             categorized_df = simple_categorize(df)
 
-        # Standardize columns and handle Date
         categorized_df = standardize_columns(categorized_df)
         if "Date" in categorized_df.columns:
             categorized_df["Date"] = pd.to_datetime(
@@ -479,12 +475,9 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             print("Warning: 'Date' column missing, adding default.")
             categorized_df["Date"] = pd.Timestamp("2025-01-01")
 
-        # Save categorized file
         categorized_df.to_csv(categorized_csv_path, index=False)
-        print(f"[DEBUG] categorize_transactions returned type: {type(categorized_df)}, shape: {categorized_df.shape}")
         print(f"Categorized CSV: {categorized_csv_path}")
 
-        # 3) Metrics
         print("[3/8] Calculating metrics...")
         metrics_file = metrics_dir / f"{input_path.stem}_metrics.csv"
         try:
@@ -497,8 +490,8 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
                 metrics_df = pd.DataFrame([out_metrics])
             metrics_df = enforce_metrics_schema(metrics_df)
         except Exception as e:
-            print("calculate_metrics util error:", e)
-            logger.error(f"calculate_metrics util error: {e}")
+            print("calculate_metrics error:", e)
+            logger.error(f"calculate_metrics error: {e}")
             monthly = categorized_df.set_index("Date").groupby(pd.Grouper(freq="M")).agg(
                 Income=("Credit", "sum"), Expenses=("Debit", "sum"))
             avg_income = monthly["Income"].mean() if not monthly.empty else 0.0
@@ -517,7 +510,6 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             }])
             metrics_df = enforce_metrics_schema(metrics_df)
 
-        # Additional metrics
         additional_metrics_df = pd.DataFrame({
             'Income Variability Index': [categorized_df[categorized_df['Category'] == 'Income']['Credit'].std() / 
                                         categorized_df[categorized_df['Category'] == 'Income']['Credit'].mean() 
@@ -556,44 +548,21 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
         metrics_df.to_csv(metrics_file, index=False)
         out["metrics_csv"] = str(metrics_file)
         print(f"Saved metrics: {metrics_file}")
-        logger.info(f"[DEBUG] Metrics DataFrame shape: {metrics_df.shape}, columns: {metrics_df.columns.tolist()}")
 
-        print("[5/9] Identifying high-value transactions...")
-        categorized_df["High_Value"] = high_value_mask
-        logger.info(f"[DEBUG] High-value transactions count: {high_value_mask.sum()}")
-
-        print("[6/9] Identifying recurring transactions...")
-        categorized_df["Recurring"] = recurring_mask
-        logger.info(f"[DEBUG] Recurring transactions count: {recurring_mask.sum()}")
-
-        # 4) Decision (heuristic)
         print("[4/8] Heuristic scoring & decisioning...")
         try:
-            if 'score_and_decide' in globals():
-                heuristic_decision = score_and_decide(metrics_df=metrics_df, cibil_score=cibil_score, categorized_file=str(categorized_csv_path))
-            else:
-                # Simple fallback decision logic
-                avg_income = metrics_df['Average Monthly Income'].iloc[0]
-                red_flags = metrics_df['Red Flag Count'].iloc[0]
-
-                if avg_income >= 30000 and red_flags == 0 and cibil_score >= 650:
-                    heuristic_decision = {"Action": "Approve", "Reason": "Good income and credit profile"}
-                else:
-                    heuristic_decision = {"Action": "Reject", "Reason": "Insufficient income or credit issues"}
-
+            heuristic_decision = score_and_decide(metrics_df=metrics_df, cibil_score=cibil_score, categorized_file=str(categorized_csv_path))
         except Exception as e:
             print(f"Decision logic error: {e}")
             heuristic_decision = {"Action": "Review", "Reason": f"Error in decision logic: {e}"}
-            print("Heuristic decision:", heuristic_decision)
 
-        # 5) ML model prediction
-        print("[5/8] ML model integration (if model exists)...")
+        print("[5/8] ML model integration...")
         model_path = Path("models/loan_approval_model.pkl")
-        model = load_model(model_path) if 'load_model' in globals() else None
+        model = load_model(model_path)
         ml_result = None
         if model is not None:
             try:
-                ml_result = model_predict_and_explain(model, metrics_df) if 'model_predict_and_explain' in globals() else None
+                ml_result = model_predict_and_explain(model, metrics_df)
             except Exception as e:
                 print(f"[ERROR] ML model prediction failed: {e}")
                 logger.error(f"ML model prediction failed: {e}")
@@ -601,7 +570,6 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
         else:
             print(f"No ML model found at {model_path}")
 
-        # 6) Combine heuristic and ML decisions
         print("[6/8] Final decision reconciliation...")
         final_decision = heuristic_decision
         if ml_result and isinstance(ml_result, dict) and ml_result.get("model_probability", 0) >= 70:
@@ -610,28 +578,23 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
         else:
             final_action = heuristic_decision.get("Action", "Unknown")
             final_reason = heuristic_decision.get("Reason", "No reason provided")
-
             logger.info(f"Using heuristic decision (ML confidence {ml_result.get('model_probability', 0)}% or model unavailable)")
 
-        # Display decision (Streamlit-compatible)
         action = final_decision.get("Action", "Unknown")
         reason = final_decision.get("Reason", "No reason provided")
         if not isinstance(reason, str):
-            reason = str(reason)  # Convert to string to avoid unpack errors
+            reason = str(reason)
         print(f"Final Decision: {action}, Reason: {reason}")
 
-        if 'st' in globals():  # Check if running in Streamlit
+        if st.runtime.exists():
             st.subheader("📋 Final Decision")
             if action.lower() == "approve":
                 st.success(f"✅ {action} ({reason})")
             else:
                 st.error(f"❌ {action} ({reason})")
-            print(f"Final Decision: {action}, Reason: {reason}")
 
-        # 7) Visualizations
         print("[7/8] Generating visualizations...")
         categorized_df["Amount"] = categorized_df["Credit"].fillna(0.0) - categorized_df["Debit"].fillna(0.0)
-
         plot_functions = [
             (plot_income_trend_plotly, "income_trend.png"),
             (plot_surplus_trend_plotly, "surplus_trend.png"),
@@ -646,12 +609,9 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             (plot_income_expense_scatter_plotly, "income_expense_scatter.png"),
             (plot_monthly_transaction_volume_by_category_plotly, "monthly_transaction_volume_by_category.png")
         ]
-
         plot_paths = []
-
         @contextmanager
         def safe_browser():
-            """Context manager to ensure browser cleanup for Plotly rendering."""
             try:
                 yield
             finally:
@@ -659,12 +619,11 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
                     pio.kaleido.scope.stop()
                 except Exception:
                     pass
-
         for func, filename in plot_functions:
             try:
                 fig = func(cibil_score) if 'cibil' in filename else func(categorized_df)
                 if fig:
-                    if 'st' in globals():  # Running in Streamlit
+                    if st.runtime.exists():
                         st.plotly_chart(fig, use_container_width=True)
                     output_path = str(plots_dir / filename)
                     fig.write_image(output_path, engine="kaleido")
@@ -673,35 +632,30 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             except Exception as e:
                 print(f"Error generating {filename}: {e}")
                 logger.error(f"Error generating {filename}: {e}")
-
         print(f"Saved {len(plot_paths)} plots to {plots_dir}")
 
-        # 10) Generate PDF report
-        print("[10/10] Building PDF report...")
-        # Create readable filename
+        print("[8/8] Building PDF report...")
         name = applicant_data.get('name', input_path.stem)
-        # Remove temp file prefixes like 'tmp' and random characters, keep meaningful parts
         if name.startswith('tmp') and '_' in name:
-            name = name.split('_', 1)[-1]  # Extract meaningful part after 'tmpXXXX_'
+            name = name.split('_', 1)[-1]
         sanitized_name = re.sub(r'[^\w\s-]', '', name).replace('\n', ' ').replace(' ', '_').strip()
         pdf_path = reports_dir / f"{sanitized_name}_{cibil_score}_report.pdf"
         html_path = reports_dir / f"{sanitized_name}_{cibil_score}_report.html"
-        # HTML template with escaped curly braces in CSS
         premium_template = """<!DOCTYPE html>
         <html>
         <head>
             <title>Loan Eligibility Report</title>
             <style>
-                body {{ font-family: Helvetica, sans-serif; margin: 40px; }}
-                .header {{ background-color: #f0f0f0; padding: 20px; border-radius: 8px; text-align: center; }}
-                .section {{ margin-top: 30px; }}
-                .table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; }}
-                .table th, .table td {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
-                .table th {{ background-color: #e0e0e0; font-weight: bold; }}
-                .table td {{ background-color: #f9f9f9; }}
-                h1 {{ color: #333; }}
-                h2 {{ color: #555; border-bottom: 2px solid #ccc; padding-bottom: 5px; }}
-                img {{ max-width: 100%; height: auto; display: block; margin: 10px 0; }}
+                body { font-family: Helvetica, sans-serif; margin: 40px; }
+                .header { background-color: #f0f0f0; padding: 20px; border-radius: 8px; text-align: center; }
+                .section { margin-top: 30px; }
+                .table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+                .table th, .table td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+                .table th { background-color: #e0e0e0; font-weight: bold; }
+                .table td { background-color: #f9f9f9; }
+                h1 { color: #333; }
+                h2 { color: #555; border-bottom: 2px solid #ccc; padding-bottom: 5px; }
+                img { max-width: 100%; height: auto; display: block; margin: 10px 0; }
             </style>
         </head>
         <body>
@@ -800,7 +754,6 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             </div>
         </body>
         </html>"""
-        # Helper functions to sanitize inputs
         def safe_float(value, default=0.0):
             try:
                 return float(value)
@@ -817,12 +770,10 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             if value is None:
                 return default
             try:
-                # Replace curly braces to prevent formatting errors
                 return str(value).replace('{', '{{').replace('}', '}}').strip()
             except Exception as e:
                 logger.warning(f"Invalid string value: {value}, error: {e}, using default {default}")
                 return default
-        # Prepare data for template with validation
         avg_monthly_income = safe_float(metrics_df['Average Monthly Income'].iloc[0] if not metrics_df.empty else 0.0)
         avg_monthly_expenses = safe_float(metrics_df['Average Monthly Expenses'].iloc[0] if not metrics_df.empty else 0.0)
         income_variability_index = safe_float(metrics_df['Income Variability Index'].iloc[0] if not metrics_df.empty else 0.0)
@@ -851,11 +802,9 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
         account_number = safe_str(applicant_data.get('account_number', 'Unknown'))
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         decision_color = safe_str('#008000' if final_action.lower() == 'approve' else '#FF0000')
-        # Debug variable values
         logger.debug(f"Template variables: applicant_name={applicant_name}, account_number={account_number}, "
                      f"cibil_score={cibil_score}, final_action={final_action}, final_reason={final_reason}, "
                      f"decision_color={decision_color}")
-        # Embed plots as base64 images for HTML
         plots_html = ''
         for plot_path, title in plot_paths:
             if os.path.exists(plot_path):
@@ -865,7 +814,6 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
                     plots_html += f'<h3>{safe_str(title)}</h3><img src="data:image/png;base64,{img_b64}" alt="{safe_str(title)}"><br>'
                 except Exception as e:
                     logger.error(f"Failed to embed plot {plot_path}: {e}")
-        # Fill HTML template
         try:
             html_str = premium_template.format(
                 timestamp=timestamp,
@@ -902,8 +850,6 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
         except Exception as e:
             logger.error(f"Failed to format HTML template: {e}")
             raise
-        
-        # Save HTML
         try:
             with open(html_path, "w", encoding="utf-8") as f:
                 f.write(html_str)
@@ -913,30 +859,22 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
         except Exception as e:
             logger.error(f"Failed to save HTML: {e}")
             out["html_path"] = None
-        # Generate PDF using ReportLab
         try:
             from reportlab.pdfbase import pdfmetrics
             from reportlab.pdfbase.ttfonts import TTFont
-            # Register standard fonts
             try:
-                # Use built-in fonts to avoid external dependencies
                 pdfmetrics.registerFont(TTFont('Helvetica', 'Helvetica'))
                 pdfmetrics.registerFont(TTFont('Helvetica-Bold', 'Helvetica-Bold'))
             except Exception as e:
                 logger.warning(f"Failed to register fonts, using defaults: {e}")
-
-            # Create PDF buffer
             pdf_buffer = io.BytesIO()
             doc = SimpleDocTemplate(pdf_buffer, pagesize=A4, leftMargin=40, rightMargin=40, topMargin=40, bottomMargin=40)
             styles = getSampleStyleSheet()
-
-            # Customize styles
             styles.add(ParagraphStyle(name='HeaderTitle', fontName='Helvetica-Bold', fontSize=16, leading=20, textColor=colors.HexColor('#333333'), alignment=1))
             styles.add(ParagraphStyle(name='HeaderText', fontName='Helvetica', fontSize=10, leading=12, textColor=colors.HexColor('#333333'), alignment=1))
             styles.add(ParagraphStyle(name='SectionHeading', fontName='Helvetica-Bold', fontSize=12, leading=14, textColor=colors.HexColor('#555555'), spaceAfter=5))
             styles.add(ParagraphStyle(name='DecisionText', fontName='Helvetica-Bold', fontSize=10, leading=12, textColor=colors.HexColor(decision_color)))
             story = []
-            # Header Section
             header_table = Table([[Paragraph("Loan Eligibility Report", styles['HeaderTitle'])], [Paragraph(f"Generated on: {timestamp}", styles['HeaderText'])]], colWidths=[A4[0] - 80])
             header_table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F0F0F0')),
@@ -949,7 +887,6 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             ]))
             story.append(header_table)
             story.append(Spacer(1, 30))
-            # Table Style for all sections
             table_style = TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#E0E0E0')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
@@ -962,11 +899,10 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
                 ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#DDDDDD')),
                 ('LEFTPADDING', (0, 0), (-1, -1), 12),
                 ('RIGHTPADDING', (0, 0), (-1, -1), 12),
-                ('TOPPADDING', (0, 0), (-1, -1), 12),
+                ('TOPPADING', (0, 0), (-1, -1), 12),
                 ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
                 ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#DDDDDD')),
             ])
-            # Applicant Data
             story.append(Paragraph("Applicant Data", styles['SectionHeading']))
             data = [
                 ["Name", applicant_name],
@@ -977,7 +913,6 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             table.setStyle(table_style)
             story.append(table)
             story.append(Spacer(1, 30))
-            # Income & Stability
             story.append(Paragraph("Income & Stability", styles['SectionHeading']))
             data = [
                 ["Average Monthly Income", f"₹{avg_monthly_income:,.2f}"],
@@ -989,7 +924,6 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             table.setStyle(table_style)
             story.append(table)
             story.append(Spacer(1, 30))
-            # Expenses & Lifestyle
             story.append(Paragraph("Expenses & Lifestyle", styles['SectionHeading']))
             data = [
                 ["Average Monthly Expenses", f"₹{avg_monthly_expenses:,.2f}"],
@@ -1001,7 +935,6 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             table.setStyle(table_style)
             story.append(table)
             story.append(Spacer(1, 30))
-            # Debt Metrics
             story.append(Paragraph("Debt Metrics", styles['SectionHeading']))
             data = [
                 ["DTI Ratio", f"{dti_ratio:.2f}%"],
@@ -1013,7 +946,6 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             table.setStyle(table_style)
             story.append(table)
             story.append(Spacer(1, 30))
-            # Cash Flow & Liquidity
             story.append(Paragraph("Cash Flow & Liquidity", styles['SectionHeading']))
             data = [
                 ["Minimum Monthly Balance", f"₹{min_monthly_balance:,.2f}"],
@@ -1025,7 +957,6 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             table.setStyle(table_style)
             story.append(table)
             story.append(Spacer(1, 30))
-            # Creditworthiness Indicators
             story.append(Paragraph("Creditworthiness Indicators", styles['SectionHeading']))
             data = [
                 ["CIBIL Score", str(cibil_score)],
@@ -1037,7 +968,6 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             table.setStyle(table_style)
             story.append(table)
             story.append(Spacer(1, 30))
-            # Fraud & Compliance Checks
             story.append(Paragraph("Fraud & Compliance Checks", styles['SectionHeading']))
             data = [
                 ["Sudden High-Value Credits", str(sudden_high_value_credits)],
@@ -1049,7 +979,6 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             table.setStyle(table_style)
             story.append(table)
             story.append(Spacer(1, 30))
-            # Decision Metrics
             story.append(Paragraph("Decision Metrics", styles['SectionHeading']))
             data = [
                 ["Bank Score", f"{bank_score:.2f}/100"],
@@ -1062,11 +991,9 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             table.setStyle(table_style)
             story.append(table)
             story.append(Spacer(1, 30))
-            # Final Decision
             story.append(Paragraph("Final Decision", styles['SectionHeading']))
             story.append(Paragraph(f"<b>{final_action}</b>: {final_reason}", styles['DecisionText']))
             story.append(Spacer(1, 30))
-            # ML Model Prediction
             story.append(Paragraph("ML Model Prediction", styles['SectionHeading']))
             data = [
                 ["Prediction", ml_prediction],
@@ -1076,7 +1003,6 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             table.setStyle(table_style)
             story.append(table)
             story.append(Spacer(1, 30))
-            # Visualizations
             story.append(Paragraph("Visualizations", styles['SectionHeading']))
             for plot_path, title in plot_paths:
                 if os.path.exists(plot_path):
@@ -1086,7 +1012,6 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
                         story.append(Spacer(1, 10))
                     except Exception as e:
                         logger.error(f"Failed to add plot {plot_path} to PDF: {e}")
-            # Build PDF
             doc.build(story)
             with open(pdf_path, 'wb') as f:
                 f.write(pdf_buffer.getvalue())
@@ -1097,8 +1022,7 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             out["pdf_path"] = None
             print("PDF generation failed. HTML report available.")
 
-        # Save decision JSON and log
-        print("[11/11] Saving decision JSON and log...")
+        print("[9/9] Saving decision JSON and log...")
         try:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             record = {
@@ -1122,7 +1046,6 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
         except Exception as e:
             logger.error(f"Failed to save decision JSON/log: {e}")
 
-        # Display report in Streamlit
         if st.runtime.exists():
             try:
                 st.markdown("### Loan Eligibility Report")
@@ -1213,7 +1136,6 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
                 st.error(f"Failed to display report: {e}")
 
         out["report_text"] = html_str
-       
     except Exception as e:
         logger.error(f"Error in analysis: {e}")
         print(f"Error in analysis: {e}")

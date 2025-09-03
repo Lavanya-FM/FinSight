@@ -11,7 +11,7 @@ import logging
 import json
 
 # Import from visualizer
-from utils.visualizer import analyze_file
+from visualizer import analyze_file
 from cryptography.fernet import Fernet
 
 # Setup logging
