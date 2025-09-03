@@ -8,6 +8,7 @@ xgboost
 spacy
 scipy
 fuzzywuzzy
+fitz
 pillow
 chardet
 PyMuPDF
@@ -38,5 +39,3 @@ werkzeug
 passlib[bcrypt]
 python-dotenv
 extra-streamlit-components
-paddlex
-pytesseract

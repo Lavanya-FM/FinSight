@@ -13,8 +13,6 @@ import chardet
 from datetime import datetime
 import fitz
 from PIL import Image
-import pytesseract
-import paddlex as pdx
 from pathlib import Path
 import sys
 from dateutil import parser as parse_date
@@ -78,88 +76,40 @@ def detect_mode_from_description(desc: str):
             return mode
     return ""
 
-def load_model(model_name):
-    """
-    Load a PaddleX model from the local official_models folder if available, otherwise download it.
-    
-    Args:
-        model_name (str): Name of the model (e.g., 'UVDoc', 'PP-OCRv5_server_det').
-    
-    Returns:
-        paddlex.Model: Loaded model instance.
-    """
-    # Define the local model directory in the project
-    model_dir = Path("official_models") / model_name
-    
-    # Check if model exists in official_models folder
-    if model_dir.exists() and any(model_dir.iterdir()):
-        logger.info(f"Loading {model_name} from local path: {model_dir}")
-        try:
-            return pdx.load_model(str(model_dir))
-        except Exception as e:
-            logger.error(f"Failed to load {model_name} from {model_dir}: {e}")
-    
-    # Fallback to downloading the model
-    logger.warning(f"Model {model_name} not found in {model_dir}. Downloading...")
-    try:
-        model = pdx.create_model(model_name)
-        logger.info(f"Downloaded {model_name} to cache")
-        return model
-    except Exception as e:
-        logger.error(f"Failed to download {model_name}: {e}")
-        raise
 
 def extract_data(input_path):
     """
-    Extract data from a PDF using PaddleX models.
-    
-    Args:
-        input_path (str): Path to the input PDF.
-    
-    Returns:
-        dict: Extracted data with name, account number, and transactions.
+    Extract data from a PDF using pdfplumber and fitz as fallback.
     """
-    # Load required models
-    models = {
-        'UVDoc': load_model('UVDoc'),
-        'PP-LCNet_x1_0_textline_ori': load_model('PP-LCNet_x1_0_textline_ori'),
-        'PP-OCRv5_server_det': load_model('PP-OCRv5_server_det'),
-        'PP-OCRv5_server_rec': load_model('PP-OCRv5_server_rec')
-    }
-    
     try:
-        # Open PDF with PyMuPDF
-        doc = fitz.open(input_path)
-        transactions = []
-        extracted_text = ""
-
-        # Extract text from each page
-        for page_num in range(doc.page_count):
-            page = doc[page_num]
-            # Convert page to image for OCR
-            pix = page.get_pixmap(matrix=fitz.Matrix(300/72, 300/72))  # 300 DPI
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.rgb)
-            
-            # Use PaddleX models for OCR
-            det_results = models['PP-OCRv5_server_det'].predict(img)
-            rec_results = models['PP-OCRv5_server_rec'].predict(det_results)
-            
-            # Combine text from recognition results
-            page_text = " ".join([res['text'] for res in rec_results if 'text' in res])
-            extracted_text += page_text + "\n"
-
+        # Try pdfplumber first
+        with pdfplumber.open(input_path) as pdf:
+            extracted_text = ""
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text:
+                    extracted_text += text + "\n"
+            if not extracted_text.strip():
+                # Fallback to fitz for scanned PDFs
+                with fitz.open(input_path) as doc:
+                    for page_num in range(doc.page_count):
+                        page = doc[page_num]
+                        pix = page.get_pixmap(matrix=fitz.Matrix(300/72, 300/72))
+                        text = page.get_text("text")
+                        extracted_text += text + "\n"
+        
         # Parse text to extract name, account number, and transactions
-        # Regex patterns for extraction (adjust based on your PDF format)
         name_match = re.search(r'Name[:\s]*([A-Za-z\s]+)', extracted_text, re.IGNORECASE)
         account_match = re.search(r'Account\s*(?:No|Number)[:\s]*(\d+)', extracted_text, re.IGNORECASE)
         
         name = name_match.group(1).strip() if name_match else "Unknown"
         account_number = account_match.group(1) if account_match else "Unknown"
 
-        # Parse transactions using regex (based on your parse_text_to_transactions)
+        # Parse transactions using regex
         transaction_pattern = re.compile(
             r"(\d{2}-\d{2}-\d{4})\s+(.+?)\s+(?:-?INR\s+([\d,]+\.\d{2})|-)?\s+(?:INR\s+([\d,]+\.\d{2})|-)?\s+(?:INR\s+([\d,]+\.\d{2}))"
         )
+        transactions = []
         for line in extracted_text.split("\n"):
             match = transaction_pattern.search(line.strip())
             if match:
@@ -239,26 +189,18 @@ def extract_df_from_scanned_pdf(pdf_data):
         return pd.DataFrame(columns=["Date", "Description", "Debit", "Credit", "Balance"])
 
 def extract_text_from_image(path):
-    """Extract text from an image using PaddleX models (fallback for non-PDF images)."""
+    """Extract text from an image using fitz (limited fallback)."""
     try:
-        # Load models
-        det_model = load_model('PP-OCRv5_server_det')
-        rec_model = load_model('PP-OCRv5_server_rec')
-        
-        # Read image
-        img = Image.open(path)
-        
-        # Perform OCR
-        det_results = det_model.predict(img)
-        rec_results = rec_model.predict(det_results)
-        
-        # Combine text
-        text = " ".join([res['text'] for res in rec_results if 'text' in res])
-        return text
+        with fitz.open(path) as doc:
+            text = ""
+            for page in doc:
+                pix = page.get_pixmap()
+                text += page.get_text("text") + "\n"
+            return text if text.strip() else ""
     except Exception as e:
         logger.error(f"Error extracting text from image {path}: {e}")
         return ""
-
+    
 def extract_transactions(input_file, output_file=None, file_type="pdf"):
     """Extract and clean bank statement data."""
     try:
