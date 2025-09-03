@@ -15,7 +15,6 @@ python-docx
 docx2txt
 streamlit
 pdfplumber
-opencv-python
 setuptools
 paddleocr
 joblib
