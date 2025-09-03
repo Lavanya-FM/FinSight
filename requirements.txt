@@ -31,7 +31,6 @@ cryptography
 transformers
 torch
 seaborn
-weasyprint
 kaleido
 psycopg2-binary
 supabase
@@ -39,3 +38,5 @@ werkzeug
 passlib[bcrypt]
 python-dotenv
 extra-streamlit-components
+paddlex
+pytesseract
