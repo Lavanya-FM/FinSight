@@ -38,3 +38,4 @@ supabase
 werkzeug
 passlib[bcrypt]
 python-dotenv
+extra-streamlit-components
