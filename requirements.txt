@@ -37,3 +37,4 @@ psycopg2-binary
 supabase
 werkzeug
 passlib[bcrypt]
+python-dotenv
