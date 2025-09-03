@@ -11,6 +11,7 @@ fuzzywuzzy
 pillow
 chardet
 PyMuPDF
+PyPDF2
 python-docx
 docx2txt
 streamlit
