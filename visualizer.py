@@ -393,10 +393,12 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
         else:
             raise ValueError("Unsupported file type; supported: pdf, csv, xlsx, txt")
 
-        # Process Date column
-        if "Date" in df.columns:
-            df["Date"] = pd.to_datetime(df["Date"], errors='coerce').fillna(pd.Timestamp("2025-01-01")).dt.strftime('%Y-%m-%d')
-            df = df.dropna(subset=["Date"]).reset_index(drop=True)
+        # Ensure required columns
+        required_columns = ["Date", "Description", "Debit", "Credit", "Balance"]
+        for col in required_columns:
+            if col not in df.columns:
+                df[col] = "" if col == "Description" else 0.0
+        df = df[required_columns]
 
         # Export raw CSV
         raw_csv_path = raw_dir / f"{input_path.stem}_raw.csv"
@@ -405,12 +407,11 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
 
         # Standardize and ensure required columns
         df = standardize_columns(df)
-        for col in ["Debit", "Credit", "Balance"]:
-            if col not in df.columns:
-                df[col] = 0.0
-        if "Date" not in df.columns:
-            print("No Date column found after parsing. Exiting.")
-            return None
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce").fillna(pd.Timestamp("2025-01-01"))
+        df = df.dropna(subset=["Date"]).reset_index(drop=True)
+        if df.empty:
+            logger.warning(f"Empty DataFrame after preprocessing {input_path}")
+            raise ValueError("No valid transactions extracted")
 
         df = make_arrow_compatible(df)
 

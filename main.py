@@ -623,7 +623,7 @@ else:
                                         st.error(f"❌ Failed to associate CIBIL score: {str(e)}")
                                 try:    
                                     with st.spinner("Analyzing file..."):
-                                        analysis_result = analyze_file(tmp_path)
+                                        analysis_result = analyze_file(tmp_path, st.session_state["cibil_score"])
                                         if isinstance(analysis_result, dict):
                                             decision_json_path = analysis_result.get("decision_json")
                                             report_text = analysis_result.get("report_text", "No report text generated")
