@@ -658,7 +658,7 @@ else:
                                             else:
                                                 st.error("Failed to save analysis results")
                                 except ImportError:
-                                    st.error("Analysis module not found. Please ensure 'app.py' with 'analyze_file' function exists.")
+                                    st.error("Analysis module not found. Please ensure 'visualizer.py' with 'analyze_file' function exists.")
                                 except Exception as e:
                                     st.error(f"Analysis failed: {str(e)}")
                                     logger.error(f"Analysis error for user {st.session_state['user_id']}: {str(e)}")
