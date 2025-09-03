@@ -199,7 +199,14 @@ class TransactionCategorizer:
             with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
         return {}
-
+    
+    def load_model(self, vectorizer_path, classifier_path):
+        import pickle
+        with open(vectorizer_path, "rb") as f:
+            self.vectorizer = pickle.load(f)
+        with open(classifier_path, "rb") as f:
+            self.classifier = pickle.load(f)
+            
     # ---------- IO helpers ----------
     def _paths(self, model_type: str, model_dir: Optional[str]) -> Dict[str, str]:
         base = _default_model_dir(model_dir)

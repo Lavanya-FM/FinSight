@@ -41,3 +41,10 @@ torch
 seaborn
 weasyprint
 kaleido
+psycopg2-binary
+supabase
+werkzeug
+passlib[bcrypt]
+PyGObject
+python-poppler
+pycario

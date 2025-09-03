@@ -1,3 +1,4 @@
+#utils/financial_metrics
 import pandas as pd
 import os
 import numpy as np
@@ -260,15 +261,18 @@ def identify_high_value_transactions(df: pd.DataFrame, amount_col="Debit", thres
     logger.info(f"[DEBUG] Identified {mask.sum()} high-value transactions with threshold {threshold}")
     return mask.fillna(False)
 
-def recurring_transactions(group: pd.DataFrame, keywords, amount_col="Debit") -> pd.Series:
-    """Detect recurring transactions via light clustering + keyword rules."""
+def recurring_transactions(group: pd.DataFrame, keywords=None, amount_col="Debit") -> pd.Series:
+    """Detect recurring transactions via clustering + keyword rules."""
+
     if group is None or group.empty:
         return pd.Series([False] * (0 if group is None else len(group)), index=(None if group is None else group.index))
 
     cols_needed = {"Description": "", amount_col: 0.0, "Date": ""}
     group = _ensure_cols(group, cols_with_defaults=cols_needed)
 
-    # safe views
+    # Ensure Description is always string
+    group["Description"] = group["Description"].astype(str)
+
     desc_amount = group[["Description", amount_col]].copy()
     desc_amount[amount_col] = pd.to_numeric(desc_amount[amount_col], errors="coerce")
     desc_amount = desc_amount.dropna(subset=["Description", amount_col])
@@ -282,7 +286,16 @@ def recurring_transactions(group: pd.DataFrame, keywords, amount_col="Debit") ->
     dates = group["Date"].apply(infer_date)
     day_norm = dates.loc[desc_amount.index].dt.day.fillna(15) / 31.0
 
-    # features: normalized amount and day-of-month
+    if keywords is None:
+        keywords = [
+            "emi","sip","subscription","rent","insurance","loan","lic",
+            "mutual fund","rd","fd","ppf","nps",
+            "electricity","water","gas","maintenance","society",
+            "broadband","wifi","phone","mobile","dth",
+            "netflix","prime","spotify","apple","google","microsoft 365","adobe",
+            "gym","tuition","school","fees"
+        ]
+
     std = np.std(amounts) + 1e-6
     feats = np.column_stack([amounts / std, day_norm])
 
@@ -297,21 +310,20 @@ def recurring_transactions(group: pd.DataFrame, keywords, amount_col="Debit") ->
 
     da_index_list = list(desc_amount.index)
     for idx in group.index:
-        desc = group.at[idx, "Description"]
-        if pd.isna(desc):
+        desc = str(group.at[idx, "Description"]).lower()
+        if not desc or desc == "nan":
             continue
-        # keyword match
-        kw_match = any(kw in str(desc).lower() for kw in keywords)
-        # cluster or repeat detection
-        da_matches = desc_amount.index[desc_amount["Description"] == desc]
+        kw_match = any(kw in desc for kw in keywords)
+        da_matches = desc_amount.index[desc_amount["Description"].str.lower() == desc]
         clustered = False
         if not da_matches.empty:
             first_idx = da_matches[0]
             pos = da_index_list.index(first_idx)
             clustered = (0 <= pos < len(labels)) and (labels[pos] != -1)
-        rec_mask.at[idx] = kw_match and (desc_counts[desc] > 1 or clustered)
+        rec_mask.at[idx] = kw_match and (desc_counts[str(group.at[idx,"Description"])] > 1 or clustered)
 
     return rec_mask
+
 
 # Main Metrics
 def calculate_metrics(df: pd.DataFrame, output_path: str) -> pd.DataFrame:

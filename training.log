@@ -1,0 +1,57 @@
+2025-08-29 12:42:09,195 - INFO - Starting transaction categorization model training
+2025-08-29 12:42:09,220 - INFO - Vectorized 102 transactions with 155 features
+2025-08-29 12:42:09,460 - INFO - Transaction categorization model trained
+2025-08-29 12:42:09,476 - INFO - Transaction categorization models saved
+2025-08-29 12:42:09,477 - INFO - Starting loan approval model training
+2025-08-29 12:42:09,478 - INFO - Loading dataset from C:\Users\lavan\Downloads\archive (17)\accepted_2007_to_2018q4.csv\accepted_2007_to_2018Q4.csv
+2025-08-29 12:43:24,523 - ERROR - Error in loan model training: Error tokenizing data. C error: out of memory
+2025-08-29 12:43:24,634 - ERROR - Training failed: Error tokenizing data. C error: out of memory
+2025-08-29 12:44:44,411 - INFO - Starting transaction categorization model training
+2025-08-29 12:44:44,439 - INFO - Vectorized 102 transactions with 155 features
+2025-08-29 12:44:44,632 - INFO - Transaction categorization model trained
+2025-08-29 12:44:44,645 - INFO - Transaction categorization models saved
+2025-08-29 12:44:44,647 - INFO - Starting loan approval model training
+2025-08-29 12:44:44,647 - INFO - Loading dataset from C:\Users\lavan\Downloads\archive (17)\accepted_2007_to_2018Q4.csv.gz
+2025-08-29 12:44:47,686 - ERROR - Error in loan model training: Can only use .str accessor with string values!
+2025-08-29 12:44:47,687 - ERROR - Training failed: Can only use .str accessor with string values!
+2025-08-29 12:46:31,396 - INFO - Starting transaction categorization model training
+2025-08-29 12:46:31,400 - INFO - Vectorized 102 transactions with 155 features
+2025-08-29 12:46:31,592 - INFO - Transaction categorization model trained
+2025-08-29 12:46:31,601 - INFO - Transaction categorization models saved
+2025-08-29 12:46:31,602 - INFO - Starting loan approval model training
+2025-08-29 12:46:31,602 - INFO - Loading dataset from C:\Users\lavan\Downloads\archive (17)\accepted_2007_to_2018Q4.csv.gz
+2025-08-29 12:46:35,116 - INFO - Subsampled to 87892 rows with 27 features
+2025-08-29 12:46:35,324 - ERROR - Error in loan model training: "['label'] not found in axis"
+2025-08-29 12:46:35,324 - ERROR - Training failed: "['label'] not found in axis"
+2025-08-29 12:47:52,669 - INFO - Starting transaction categorization model training
+2025-08-29 12:47:52,688 - INFO - Vectorized 102 transactions with 155 features
+2025-08-29 12:47:52,896 - INFO - Transaction categorization model trained
+2025-08-29 12:47:52,907 - INFO - Transaction categorization models saved
+2025-08-29 12:47:52,908 - INFO - Starting loan approval model training
+2025-08-29 12:47:52,908 - INFO - Loading dataset from C:\Users\lavan\Downloads\archive (17)\accepted_2007_to_2018Q4.csv.gz
+2025-08-29 12:47:57,176 - INFO - After dropping NaN labels, 87892 rows remain
+2025-08-29 12:47:57,178 - INFO - Subsampled to 87892 rows with 27 features
+2025-08-29 12:47:57,440 - ERROR - Error in loan model training: "['label'] not found in axis"
+2025-08-29 12:47:57,440 - ERROR - Training failed: "['label'] not found in axis"
+2025-08-29 12:49:46,596 - INFO - Starting transaction categorization model training
+2025-08-29 12:49:46,618 - INFO - Vectorized 102 transactions with 155 features
+2025-08-29 12:49:46,790 - INFO - Transaction categorization model trained
+2025-08-29 12:49:46,799 - INFO - Transaction categorization models saved
+2025-08-29 12:49:46,799 - INFO - Starting loan approval model training
+2025-08-29 12:49:46,799 - INFO - Loading dataset from C:\Users\lavan\Downloads\archive (17)\accepted_2007_to_2018Q4.csv.gz
+2025-08-29 12:49:51,100 - INFO - After dropping NaN labels, 87892 rows remain
+2025-08-29 12:49:51,101 - INFO - Subsampled to 87892 rows with 27 features
+2025-08-29 12:49:53,186 - INFO - Generated 741 features after polynomial transformation
+2025-08-29 12:49:55,079 - INFO - Features scaled
+2025-08-29 12:49:55,562 - INFO - Split data: 79102 training/validation, 8790 holdout
+2025-08-29 14:14:29,480 - INFO - Starting transaction categorization model training
+2025-08-29 14:14:29,498 - INFO - Vectorized 102 transactions with 155 features
+2025-08-29 14:14:29,718 - INFO - Transaction categorization model trained
+2025-08-29 14:14:29,734 - INFO - Transaction categorization models saved
+2025-08-29 14:14:29,735 - INFO - Starting loan approval model training
+2025-08-29 14:14:29,735 - INFO - Loading dataset from C:\Users\lavan\Downloads\archive (17)\accepted_2007_to_2018Q4.csv.gz
+2025-08-29 14:14:33,694 - INFO - After dropping NaN labels, 87892 rows remain
+2025-08-29 14:14:33,695 - INFO - Subsampled to 87892 rows with 27 features
+2025-08-29 14:14:34,801 - INFO - Generated 741 features after polynomial transformation
+2025-08-29 14:14:36,633 - INFO - Features scaled
+2025-08-29 14:14:37,344 - INFO - Split data: 79102 training/validation, 8790 holdout
