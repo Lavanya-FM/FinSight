@@ -11,7 +11,6 @@ import numpy as np
 import streamlit as st
 from datetime import datetime
 from pathlib import Path
-from weasyprint import HTML  # Added for HTML-to-PDF conversion
 
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
@@ -50,7 +49,6 @@ from contextlib import contextmanager
 logging.basicConfig(level=logging.INFO, filename='app.log', filemode='a',
                     format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
 
 # Helpers
 def ensure_dir(path):
@@ -677,385 +675,379 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
 
         print(f"Saved {len(plot_paths)} plots to {plots_dir}")
 
-        # 10) Generate PDF report from HTML
+        # 10) Generate PDF report
         print("[10/10] Building PDF report...")
-        sanitized_name = re.sub(r'[^\w\s-]', '', applicant_data.get('name', input_path.stem)).replace('\n', ' ').strip()
-        html_path = reports_dir / f"{sanitized_name}_{cibil_score}_report.html"
+        # Create readable filename
+        name = applicant_data.get('name', input_path.stem)
+        # Remove temp file prefixes like 'tmp' and random characters, keep meaningful parts
+        if name.startswith('tmp') and '_' in name:
+            name = name.split('_', 1)[-1]  # Extract meaningful part after 'tmpXXXX_'
+        sanitized_name = re.sub(r'[^\w\s-]', '', name).replace('\n', ' ').replace(' ', '_').strip()
         pdf_path = reports_dir / f"{sanitized_name}_{cibil_score}_report.pdf"
-
+        html_path = reports_dir / f"{sanitized_name}_{cibil_score}_report.html"
+        # HTML template with escaped curly braces in CSS
         premium_template = """<!DOCTYPE html>
-<html>
-<head>
-    <title>Loan Eligibility Report</title>
-    <style>
-        body {{ font-family: Arial, sans-serif; margin: 40px; }}
-        .header {{ background-color: #f0f0f0; padding: 20px; border-radius: 8px; text-align: center; }}
-        .section {{ margin-top: 30px; }}
-        .table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; }}
-        .table th, .table td {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
-        .table th {{ background-color: #e0e0e0; font-weight: bold; }}
-        .table td {{ background-color: #f9f9f9; }}
-        h1 {{ color: #333; }}
-        h2 {{ color: #555; border-bottom: 2px solid #ccc; padding-bottom: 5px; }}
-        img {{ max-width: 100%; height: auto; display: block; margin: 10px 0; }}
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>Loan Eligibility Report</h1>
-        <p>Generated on: {timestamp}</p>
-    </div>
-
-    <div class="section">
-        <h2>Applicant Data</h2>
-        <table class="table">
-            <tr><th>Name</th><td>{applicant_name}</td></tr>
-            <tr><th>Account Number</th><td>{account_number}</td></tr>
-            <tr><th>CIBIL Score</th><td>{cibil_score}</td></tr>
-        </table>
-    </div>
-
-    <div class="section">
-        <h2>Income & Stability</h2>
-        <table class="table">
-            <tr><th>Average Monthly Income</th><td>₹{avg_monthly_income:,.2f}</td></tr>
-            <tr><th>Income Variability Index</th><td>{income_variability_index:.2f}</td></tr>
-            <tr><th>Number of Income Sources</th><td>{num_income_sources}</td></tr>
-            <tr><th>Recent Salary Trend</th><td>{recent_salary_trend:.2f}%</td></tr>
-        </table>
-    </div>
-
-    <div class="section">
-        <h2>Expenses & Lifestyle</h2>
-        <table class="table">
-            <tr><th>Average Monthly Expenses</th><td>₹{avg_monthly_expenses:,.2f}</td></tr>
-            <tr><th>Savings Ratio</th><td>{savings_ratio:.2f}%</td></tr>
-            <tr><th>Discretionary Spending</th><td>{discretionary_spending:.2f}%</td></tr>
-            <tr><th>High-Cost EMI Payments</th><td>₹{high_cost_emi:,.2f}</td></tr>
-        </table>
-    </div>
-
-    <div class="section">
-        <h2>Debt Metrics</h2>
-        <table class="table">
-            <tr><th>DTI Ratio</th><td>{dti_ratio:.2f}%</td></tr>
-            <tr><th>Existing Loan Count</th><td>{existing_loan_count}</td></tr>
-            <tr><th>Credit Card Payments</th><td>₹{credit_card_payments:,.2f}</td></tr>
-            <tr><th>Bounced Cheques Count</th><td>{bounced_cheques_count}</td></tr>
-        </table>
-    </div>
-
-    <div class="section">
-        <h2>Cash Flow & Liquidity</h2>
-        <table class="table">
-            <tr><th>Minimum Monthly Balance</th><td>₹{min_monthly_balance:,.2f}</td></tr>
-            <tr><th>Average Closing Balance</th><td>₹{avg_closing_balance:,.2f}</td></tr>
-            <tr><th>Overdraft Usage Frequency</th><td>{overdraft_frequency}</td></tr>
-            <tr><th>Negative Balance Days</th><td>{negative_balance_days}</td></tr>
-        </table>
-    </div>
-
-    <div class="section">
-        <h2>Creditworthiness Indicators</h2>
-        <table class="table">
-            <tr><th>CIBIL Score</th><td>{cibil_score}</td></tr>
-            <tr><th>Payment History</th><td>Derived from statement</td></tr>
-            <tr><th>Delinquency Flags</th><td>{delinquency_flags}</td></tr>
-            <tr><th>Recent Loan Inquiries</th><td>Not available</td></tr>
-        </table>
-    </div>
-
-    <div class="section">
-        <h2>Fraud & Compliance Checks</h2>
-        <table class="table">
-            <tr><th>Sudden High-Value Credits</th><td>{sudden_high_value_credits}</td></tr>
-            <tr><th>Circular Transactions</th><td>{circular_transactions}</td></tr>
-            <tr><th>Salary Mismatch</th><td>Not detected</td></tr>
-            <tr><th>Blacklisted Accounts</th><td>Not detected</td></tr>
-        </table>
-    </div>
-
-    <div class="section">
-        <h2>Decision Metrics</h2>
-        <table class="table">
-            <tr><th>Bank Score</th><td>{bank_score:.2f}/100</td></tr>
-            <tr><th>DTI Ratio</th><td>{dti_ratio:.2f}%</td></tr>
-            <tr><th>Average Closing Balance</th><td>₹{avg_closing_balance:,.2f}</td></tr>
-            <tr><th>CIBIL Score</th><td>{cibil_score}</td></tr>
-            <tr><th>Bounced Cheques</th><td>{bounced_cheques_count}</td></tr>
-        </table>
-    </div>
-
-    <div class="section">
-        <h2>Final Decision</h2>
-        <p style="color: {decision_color}; font-weight: bold;">
-            <b>{final_action}</b>: {final_reason}
-        </p>
-    </div>
-
-    <div class="section">
-        <h2>ML Model Prediction</h2>
-        <table class="table">
-            <tr><th>Prediction</th><td>{ml_prediction}</td></tr>
-            <tr><th>Confidence</th><td>{ml_probability:.2f}%</td></tr>
-        </table>
-    </div>
-
-    <div class="section">
-        <h2>Visualizations</h2>
-        {plots_html}
-    </div>
-
-</body>
-</html>"""
-
-        # Prepare data for template
-        avg_monthly_income = metrics_df['Average Monthly Income'].iloc[0]
-        avg_monthly_expenses = metrics_df['Average Monthly Expenses'].iloc[0]
-        income_variability_index = metrics_df['Income Variability Index'].iloc[0]
-        num_income_sources = metrics_df['Number of Income Sources'].iloc[0]
-        recent_salary_trend = metrics_df['Recent Salary Trend (%)'].iloc[0]
-        savings_ratio = metrics_df['Savings Rate'].iloc[0]
-        discretionary_spending = metrics_df['Discretionary Spending (%)'].iloc[0]
-        high_cost_emi = metrics_df['High-Cost EMI Payments'].iloc[0]
-        dti_ratio = metrics_df['DTI Ratio'].iloc[0]
-        existing_loan_count = metrics_df['Existing Loan Count'].iloc[0]
-        credit_card_payments = metrics_df['Credit Card Payments'].iloc[0]
-        bounced_cheques_count = metrics_df['Bounced Cheques Count'].iloc[0]
-        min_monthly_balance = metrics_df['Minimum Monthly Balance'].iloc[0]
-        avg_closing_balance = metrics_df['Average Closing Balance'].iloc[0]
-        overdraft_frequency = metrics_df['Overdraft Usage Frequency'].iloc[0]
-        negative_balance_days = metrics_df['Negative Balance Days'].iloc[0]
-        delinquency_flags = bounced_cheques_count
-        sudden_high_value_credits = metrics_df['Sudden High-Value Credits'].iloc[0]
-        circular_transactions = metrics_df['Circular Transactions'].iloc[0]
-        bank_score = heuristic_decision.get('Total Score', 0)
-        ml_prediction = ml_result.get('model_prediction', 'N/A') if ml_result else 'N/A'
-        ml_probability = ml_result.get('model_probability', 0) if ml_result else 0
-        final_action = heuristic_decision['Action']
-        final_reason = heuristic_decision['Reason']
-        applicant_name = applicant_data['name']
-        account_number = applicant_data['account_number']
+        <html>
+        <head>
+            <title>Loan Eligibility Report</title>
+            <style>
+                body {{ font-family: Helvetica, sans-serif; margin: 40px; }}
+                .header {{ background-color: #f0f0f0; padding: 20px; border-radius: 8px; text-align: center; }}
+                .section {{ margin-top: 30px; }}
+                .table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; }}
+                .table th, .table td {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
+                .table th {{ background-color: #e0e0e0; font-weight: bold; }}
+                .table td {{ background-color: #f9f9f9; }}
+                h1 {{ color: #333; }}
+                h2 {{ color: #555; border-bottom: 2px solid #ccc; padding-bottom: 5px; }}
+                img {{ max-width: 100%; height: auto; display: block; margin: 10px 0; }}
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h1>Loan Eligibility Report</h1>
+                <p>Generated on: {timestamp}</p>
+            </div>
+            <div class="section">
+                <h2>Applicant Data</h2>
+                <table class="table">
+                    <tr><th>Name</th><td>{applicant_name}</td></tr>
+                    <tr><th>Account Number</th><td>{account_number}</td></tr>
+                    <tr><th>CIBIL Score</th><td>{cibil_score}</td></tr>
+                </table>
+            </div>
+            <div class="section">
+                <h2>Income & Stability</h2>
+                <table class="table">
+                    <tr><th>Average Monthly Income</th><td>₹{avg_monthly_income:,.2f}</td></tr>
+                    <tr><th>Income Variability Index</th><td>{income_variability_index:.2f}</td></tr>
+                    <tr><th>Number of Income Sources</th><td>{num_income_sources}</td></tr>
+                    <tr><th>Recent Salary Trend</th><td>{recent_salary_trend:.2f}%</td></tr>
+                </table>
+            </div>
+            <div class="section">
+                <h2>Expenses & Lifestyle</h2>
+                <table class="table">
+                    <tr><th>Average Monthly Expenses</th><td>₹{avg_monthly_expenses:,.2f}</td></tr>
+                    <tr><th>Savings Ratio</th><td>{savings_ratio:.2f}%</td></tr>
+                    <tr><th>Discretionary Spending</th><td>{discretionary_spending:.2f}%</td></tr>
+                    <tr><th>High-Cost EMI Payments</th><td>₹{high_cost_emi:,.2f}</td></tr>
+                </table>
+            </div>
+            <div class="section">
+                <h2>Debt Metrics</h2>
+                <table class="table">
+                    <tr><th>DTI Ratio</th><td>{dti_ratio:.2f}%</td></tr>
+                    <tr><th>Existing Loan Count</th><td>{existing_loan_count}</td></tr>
+                    <tr><th>Credit Card Payments</th><td>₹{credit_card_payments:,.2f}</td></tr>
+                    <tr><th>Bounced Cheques Count</th><td>{bounced_cheques_count}</td></tr>
+                </table>
+            </div>
+            <div class="section">
+                <h2>Cash Flow & Liquidity</h2>
+                <table class="table">
+                    <tr><th>Minimum Monthly Balance</th><td>₹{min_monthly_balance:,.2f}</td></tr>
+                    <tr><th>Average Closing Balance</th><td>₹{avg_closing_balance:,.2f}</td></tr>
+                    <tr><th>Overdraft Usage Frequency</th><td>{overdraft_frequency}</td></tr>
+                    <tr><th>Negative Balance Days</th><td>{negative_balance_days}</td></tr>
+                </table>
+            </div>
+            <div class="section">
+                <h2>Creditworthiness Indicators</h2>
+                <table class="table">
+                    <tr><th>CIBIL Score</th><td>{cibil_score}</td></tr>
+                    <tr><th>Payment History</th><td>Derived from statement</td></tr>
+                    <tr><th>Delinquency Flags</th><td>{delinquency_flags}</td></tr>
+                    <tr><th>Recent Loan Inquiries</th><td>Not available</td></tr>
+                </table>
+            </div>
+            <div class="section">
+                <h2>Fraud & Compliance Checks</h2>
+                <table class="table">
+                    <tr><th>Sudden High-Value Credits</th><td>{sudden_high_value_credits}</td></tr>
+                    <tr><th>Circular Transactions</th><td>{circular_transactions}</td></tr>
+                    <tr><th>Salary Mismatch</th><td>Not detected</td></tr>
+                    <tr><th>Blacklisted Accounts</th><td>Not detected</td></tr>
+                </table>
+            </div>
+            <div class="section">
+                <h2>Decision Metrics</h2>
+                <table class="table">
+                    <tr><th>Bank Score</th><td>{bank_score:.2f}/100</td></tr>
+                    <tr><th>DTI Ratio</th><td>{dti_ratio:.2f}%</td></tr>
+                    <tr><th>Average Closing Balance</th><td>₹{avg_closing_balance:,.2f}</td></tr>
+                    <tr><th>CIBIL Score</th><td>{cibil_score}</td></tr>
+                    <tr><th>Bounced Cheques</th><td>{bounced_cheques_count}</td></tr>
+                </table>
+            </div>
+            <div class="section">
+                <h2>Final Decision</h2>
+                <p style="color: {decision_color}; font-weight: bold;">
+                    <b>{final_action}</b>: {final_reason}
+                </p>
+            </div>
+            <div class="section">
+                <h2>ML Model Prediction</h2>
+                <table class="table">
+                    <tr><th>Prediction</th><td>{ml_prediction}</td></tr>
+                    <tr><th>Confidence</th><td>{ml_probability:.2f}%</td></tr>
+                </table>
+            </div>
+            <div class="section">
+                <h2>Visualizations</h2>
+                {plots_html}
+            </div>
+        </body>
+        </html>"""
+        # Helper functions to sanitize inputs
+        def safe_float(value, default=0.0):
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid float value: {value}, using default {default}")
+                return default
+        def safe_int(value, default=0):
+            try:
+                return int(value)
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid int value: {value}, using default {default}")
+                return default
+        def safe_str(value, default="Unknown"):
+            if value is None:
+                return default
+            try:
+                # Replace curly braces to prevent formatting errors
+                return str(value).replace('{', '{{').replace('}', '}}').strip()
+            except Exception as e:
+                logger.warning(f"Invalid string value: {value}, error: {e}, using default {default}")
+                return default
+        # Prepare data for template with validation
+        avg_monthly_income = safe_float(metrics_df['Average Monthly Income'].iloc[0] if not metrics_df.empty else 0.0)
+        avg_monthly_expenses = safe_float(metrics_df['Average Monthly Expenses'].iloc[0] if not metrics_df.empty else 0.0)
+        income_variability_index = safe_float(metrics_df['Income Variability Index'].iloc[0] if not metrics_df.empty else 0.0)
+        num_income_sources = safe_int(metrics_df['Number of Income Sources'].iloc[0] if not metrics_df.empty else 0)
+        recent_salary_trend = safe_float(metrics_df['Recent Salary Trend (%)'].iloc[0] if not metrics_df.empty else 0.0)
+        savings_ratio = safe_float(metrics_df['Savings Rate'].iloc[0] if not metrics_df.empty else 0.0)
+        discretionary_spending = safe_float(metrics_df['Discretionary Spending (%)'].iloc[0] if not metrics_df.empty else 0.0)
+        high_cost_emi = safe_float(metrics_df['High-Cost EMI Payments'].iloc[0] if not metrics_df.empty else 0.0)
+        dti_ratio = safe_float(metrics_df['DTI Ratio'].iloc[0] if not metrics_df.empty else 0.0)
+        existing_loan_count = safe_int(metrics_df['Existing Loan Count'].iloc[0] if not metrics_df.empty else 0)
+        credit_card_payments = safe_float(metrics_df['Credit Card Payments'].iloc[0] if not metrics_df.empty else 0.0)
+        bounced_cheques_count = safe_int(metrics_df['Bounced Cheques Count'].iloc[0] if not metrics_df.empty else 0)
+        min_monthly_balance = safe_float(metrics_df['Minimum Monthly Balance'].iloc[0] if not metrics_df.empty else 0.0)
+        avg_closing_balance = safe_float(metrics_df['Average Closing Balance'].iloc[0] if not metrics_df.empty else 0.0)
+        overdraft_frequency = safe_int(metrics_df['Overdraft Usage Frequency'].iloc[0] if not metrics_df.empty else 0)
+        negative_balance_days = safe_int(metrics_df['Negative Balance Days'].iloc[0] if not metrics_df.empty else 0)
+        delinquency_flags = safe_int(bounced_cheques_count)
+        sudden_high_value_credits = safe_int(metrics_df['Sudden High-Value Credits'].iloc[0] if not metrics_df.empty else 0)
+        circular_transactions = safe_int(metrics_df['Circular Transactions'].iloc[0] if not metrics_df.empty else 0)
+        bank_score = safe_float(heuristic_decision.get('Total Score', 0))
+        ml_prediction = safe_str(ml_result.get('model_prediction', 'N/A') if ml_result else 'N/A')
+        ml_probability = safe_float(ml_result.get('model_probability', 0) if ml_result else 0)
+        final_action = safe_str(heuristic_decision.get('Action', 'Unknown'))
+        final_reason = safe_str(heuristic_decision.get('Reason', 'No reason provided'))
+        applicant_name = safe_str(applicant_data.get('name', 'Unknown'))
+        account_number = safe_str(applicant_data.get('account_number', 'Unknown'))
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        decision_color = '#008000' if final_action.lower() == 'approve' else '#FF0000'
-
-        # Embed plots as base64 images
+        decision_color = safe_str('#008000' if final_action.lower() == 'approve' else '#FF0000')
+        # Debug variable values
+        logger.debug(f"Template variables: applicant_name={applicant_name}, account_number={account_number}, "
+                     f"cibil_score={cibil_score}, final_action={final_action}, final_reason={final_reason}, "
+                     f"decision_color={decision_color}")
+        # Embed plots as base64 images for HTML
         plots_html = ''
         for plot_path, title in plot_paths:
             if os.path.exists(plot_path):
-                with open(plot_path, "rb") as img_file:
-                    img_b64 = base64.b64encode(img_file.read()).decode()
-                plots_html += f'<h3>{title}</h3><img src="data:image/png;base64,{img_b64}" alt="{title}"><br>'
-
-        # Fill template
-        html_str = premium_template.format(
-            timestamp=timestamp,
-            applicant_name=applicant_name,
-            account_number=account_number,
-            cibil_score=cibil_score,
-            avg_monthly_income=avg_monthly_income,
-            income_variability_index=income_variability_index,
-            num_income_sources=num_income_sources,
-            recent_salary_trend=recent_salary_trend,
-            avg_monthly_expenses=avg_monthly_expenses,
-            savings_ratio=savings_ratio,
-            discretionary_spending=discretionary_spending,
-            high_cost_emi=high_cost_emi,
-            dti_ratio=dti_ratio,
-            existing_loan_count=existing_loan_count,
-            credit_card_payments=credit_card_payments,
-            bounced_cheques_count=bounced_cheques_count,
-            min_monthly_balance=min_monthly_balance,
-            avg_closing_balance=avg_closing_balance,
-            overdraft_frequency=overdraft_frequency,
-            negative_balance_days=negative_balance_days,
-            delinquency_flags=delinquency_flags,
-            sudden_high_value_credits=sudden_high_value_credits,
-            circular_transactions=circular_transactions,
-            bank_score=bank_score,
-            final_action=final_action,
-            final_reason=final_reason,
-            decision_color=decision_color,
-            ml_prediction=ml_prediction,
-            ml_probability=ml_probability,
-            plots_html=plots_html
-        )
-
+                try:
+                    with open(plot_path, "rb") as img_file:
+                        img_b64 = base64.b64encode(img_file.read()).decode()
+                    plots_html += f'<h3>{safe_str(title)}</h3><img src="data:image/png;base64,{img_b64}" alt="{safe_str(title)}"><br>'
+                except Exception as e:
+                    logger.error(f"Failed to embed plot {plot_path}: {e}")
+        # Fill HTML template
+        try:
+            html_str = premium_template.format(
+                timestamp=timestamp,
+                applicant_name=applicant_name,
+                account_number=account_number,
+                cibil_score=cibil_score,
+                avg_monthly_income=avg_monthly_income,
+                income_variability_index=income_variability_index,
+                num_income_sources=num_income_sources,
+                recent_salary_trend=recent_salary_trend,
+                avg_monthly_expenses=avg_monthly_expenses,
+                savings_ratio=savings_ratio,
+                discretionary_spending=discretionary_spending,
+                high_cost_emi=high_cost_emi,
+                dti_ratio=dti_ratio,
+                existing_loan_count=existing_loan_count,
+                credit_card_payments=credit_card_payments,
+                bounced_cheques_count=bounced_cheques_count,
+                min_monthly_balance=min_monthly_balance,
+                avg_closing_balance=avg_closing_balance,
+                overdraft_frequency=overdraft_frequency,
+                negative_balance_days=negative_balance_days,
+                delinquency_flags=delinquency_flags,
+                sudden_high_value_credits=sudden_high_value_credits,
+                circular_transactions=circular_transactions,
+                bank_score=bank_score,
+                final_action=final_action,
+                final_reason=final_reason,
+                decision_color=decision_color,
+                ml_prediction=ml_prediction,
+                ml_probability=ml_probability,
+                plots_html=plots_html
+            )
+        except Exception as e:
+            logger.error(f"Failed to format HTML template: {e}")
+            raise
+        
         # Save HTML
-        with open(html_path, "w", encoding="utf-8") as f:
-            f.write(html_str)
-        logger.info(f"Generated HTML: {html_path}")
-        out["html_path"] = str(html_path)
-        out["report_text"] = html_str
-
+        try:
+            with open(html_path, "w", encoding="utf-8") as f:
+                f.write(html_str)
+            logger.info(f"Generated HTML: {html_path}")
+            out["html_path"] = str(html_path)
+            out["report_text"] = html_str
+        except Exception as e:
+            logger.error(f"Failed to save HTML: {e}")
+            out["html_path"] = None
         # Generate PDF using ReportLab
         try:
+            from reportlab.pdfbase import pdfmetrics
+            from reportlab.pdfbase.ttfonts import TTFont
+            # Register standard fonts
+            try:
+                # Use built-in fonts to avoid external dependencies
+                pdfmetrics.registerFont(TTFont('Helvetica', 'Helvetica'))
+                pdfmetrics.registerFont(TTFont('Helvetica-Bold', 'Helvetica-Bold'))
+            except Exception as e:
+                logger.warning(f"Failed to register fonts, using defaults: {e}")
             # Create PDF buffer
             pdf_buffer = io.BytesIO()
-            doc = SimpleDocTemplate(pdf_buffer, pagesize=A4)
+            doc = SimpleDocTemplate(pdf_buffer, pagesize=A4, leftMargin=40, rightMargin=40, topMargin=40, bottomMargin=40)
             styles = getSampleStyleSheet()
+            # Customize styles
+            styles.add(ParagraphStyle(name='HeaderTitle', fontName='Helvetica-Bold', fontSize=16, leading=20, textColor=colors.HexColor('#333333'), alignment=1))
+            styles.add(ParagraphStyle(name='HeaderText', fontName='Helvetica', fontSize=10, leading=12, textColor=colors.HexColor('#333333'), alignment=1))
+            styles.add(ParagraphStyle(name='SectionHeading', fontName='Helvetica-Bold', fontSize=12, leading=14, textColor=colors.HexColor('#555555'), spaceAfter=5))
+            styles.add(ParagraphStyle(name='DecisionText', fontName='Helvetica-Bold', fontSize=10, leading=12, textColor=colors.HexColor(decision_color)))
             story = []
-
-            # Add title
-            story.append(Paragraph("Loan Eligibility Report", styles['Title']))
-            story.append(Paragraph(f"Generated on: {timestamp}", styles['Normal']))
-            story.append(Spacer(1, 12))
-
+            # Header Section
+            header_table = Table([[Paragraph("Loan Eligibility Report", styles['HeaderTitle'])], [Paragraph(f"Generated on: {timestamp}", styles['HeaderText'])]], colWidths=[A4[0] - 80])
+            header_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F0F0F0')),
+                ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#CCCCCC')),
+                ('ROUNDED', (0, 0), (-1, -1), 8),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('PADDING', (0, 0), (-1, 0), 10),
+                ('PADDING', (0, 1), (-1, 1), 5),
+            ]))
+            story.append(header_table)
+            story.append(Spacer(1, 30))
+            # Table Style for all sections
+            table_style = TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#E0E0E0')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F9F9F9')),
+                ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 1), (-1, -1), 10),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#DDDDDD')),
+                ('LEFTPADDING', (0, 0), (-1, -1), 12),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+                ('TOPPADDING', (0, 0), (-1, -1), 12),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+                ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#DDDDDD')),
+            ])
             # Applicant Data
-            story.append(Paragraph("Applicant Data", styles['Heading2']))
+            story.append(Paragraph("Applicant Data", styles['SectionHeading']))
             data = [
                 ["Name", applicant_name],
                 ["Account Number", account_number],
                 ["CIBIL Score", str(cibil_score)]
             ]
-            table = Table(data)
-            table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 12),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black)
-            ]))
+            table = Table(data, colWidths=[200, A4[0] - 280])
+            table.setStyle(table_style)
             story.append(table)
-            story.append(Spacer(1, 12))
-
+            story.append(Spacer(1, 30))
             # Income & Stability
-            story.append(Paragraph("Income & Stability", styles['Heading2']))
+            story.append(Paragraph("Income & Stability", styles['SectionHeading']))
             data = [
                 ["Average Monthly Income", f"₹{avg_monthly_income:,.2f}"],
                 ["Income Variability Index", f"{income_variability_index:.2f}"],
                 ["Number of Income Sources", str(num_income_sources)],
                 ["Recent Salary Trend", f"{recent_salary_trend:.2f}%"]
             ]
-            table = Table(data)
-            table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 12),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black)
-            ]))
+            table = Table(data, colWidths=[200, A4[0] - 280])
+            table.setStyle(table_style)
             story.append(table)
-            story.append(Spacer(1, 12))
-
+            story.append(Spacer(1, 30))
             # Expenses & Lifestyle
-            story.append(Paragraph("Expenses & Lifestyle", styles['Heading2']))
+            story.append(Paragraph("Expenses & Lifestyle", styles['SectionHeading']))
             data = [
                 ["Average Monthly Expenses", f"₹{avg_monthly_expenses:,.2f}"],
                 ["Savings Ratio", f"{savings_ratio:.2f}%"],
                 ["Discretionary Spending", f"{discretionary_spending:.2f}%"],
                 ["High-Cost EMI Payments", f"₹{high_cost_emi:,.2f}"]
             ]
-            table = Table(data)
-            table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 12),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black)
-            ]))
+            table = Table(data, colWidths=[200, A4[0] - 280])
+            table.setStyle(table_style)
             story.append(table)
-            story.append(Spacer(1, 12))
-
+            story.append(Spacer(1, 30))
             # Debt Metrics
-            story.append(Paragraph("Debt Metrics", styles['Heading2']))
+            story.append(Paragraph("Debt Metrics", styles['SectionHeading']))
             data = [
                 ["DTI Ratio", f"{dti_ratio:.2f}%"],
                 ["Existing Loan Count", str(existing_loan_count)],
                 ["Credit Card Payments", f"₹{credit_card_payments:,.2f}"],
                 ["Bounced Cheques Count", str(bounced_cheques_count)]
             ]
-            table = Table(data)
-            table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 12),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black)
-            ]))
+            table = Table(data, colWidths=[200, A4[0] - 280])
+            table.setStyle(table_style)
             story.append(table)
-            story.append(Spacer(1, 12))
-
+            story.append(Spacer(1, 30))
             # Cash Flow & Liquidity
-            story.append(Paragraph("Cash Flow & Liquidity", styles['Heading2']))
+            story.append(Paragraph("Cash Flow & Liquidity", styles['SectionHeading']))
             data = [
                 ["Minimum Monthly Balance", f"₹{min_monthly_balance:,.2f}"],
                 ["Average Closing Balance", f"₹{avg_closing_balance:,.2f}"],
                 ["Overdraft Usage Frequency", str(overdraft_frequency)],
                 ["Negative Balance Days", str(negative_balance_days)]
             ]
-            table = Table(data)
-            table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 12),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black)
-            ]))
+            table = Table(data, colWidths=[200, A4[0] - 280])
+            table.setStyle(table_style)
             story.append(table)
-            story.append(Spacer(1, 12))
-
+            story.append(Spacer(1, 30))
             # Creditworthiness Indicators
-            story.append(Paragraph("Creditworthiness Indicators", styles['Heading2']))
+            story.append(Paragraph("Creditworthiness Indicators", styles['SectionHeading']))
             data = [
                 ["CIBIL Score", str(cibil_score)],
                 ["Payment History", "Derived from statement"],
                 ["Delinquency Flags", str(delinquency_flags)],
                 ["Recent Loan Inquiries", "Not available"]
             ]
-            table = Table(data)
-            table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 12),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black)
-            ]))
+            table = Table(data, colWidths=[200, A4[0] - 280])
+            table.setStyle(table_style)
             story.append(table)
-            story.append(Spacer(1, 12))
-
+            story.append(Spacer(1, 30))
             # Fraud & Compliance Checks
-            story.append(Paragraph("Fraud & Compliance Checks", styles['Heading2']))
+            story.append(Paragraph("Fraud & Compliance Checks", styles['SectionHeading']))
             data = [
                 ["Sudden High-Value Credits", str(sudden_high_value_credits)],
                 ["Circular Transactions", str(circular_transactions)],
                 ["Salary Mismatch", "Not detected"],
                 ["Blacklisted Accounts", "Not detected"]
             ]
-            table = Table(data)
-            table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 12),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black)
-            ]))
+            table = Table(data, colWidths=[200, A4[0] - 280])
+            table.setStyle(table_style)
             story.append(table)
-            story.append(Spacer(1, 12))
-
+            story.append(Spacer(1, 30))
             # Decision Metrics
-            story.append(Paragraph("Decision Metrics", styles['Heading2']))
+            story.append(Paragraph("Decision Metrics", styles['SectionHeading']))
             data = [
                 ["Bank Score", f"{bank_score:.2f}/100"],
                 ["DTI Ratio", f"{dti_ratio:.2f}%"],
@@ -1063,60 +1055,40 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
                 ["CIBIL Score", str(cibil_score)],
                 ["Bounced Cheques", str(bounced_cheques_count)]
             ]
-            table = Table(data)
-            table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 12),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black)
-            ]))
+            table = Table(data, colWidths=[200, A4[0] - 280])
+            table.setStyle(table_style)
             story.append(table)
-            story.append(Spacer(1, 12))
-
+            story.append(Spacer(1, 30))
             # Final Decision
-            story.append(Paragraph("Final Decision", styles['Heading2']))
-            story.append(Paragraph(f"<b>{final_action}</b>: {final_reason}", styles['Normal']))
-            story.append(Spacer(1, 12))
-
+            story.append(Paragraph("Final Decision", styles['SectionHeading']))
+            story.append(Paragraph(f"<b>{final_action}</b>: {final_reason}", styles['DecisionText']))
+            story.append(Spacer(1, 30))
             # ML Model Prediction
-            story.append(Paragraph("ML Model Prediction", styles['Heading2']))
+            story.append(Paragraph("ML Model Prediction", styles['SectionHeading']))
             data = [
                 ["Prediction", ml_prediction],
                 ["Confidence", f"{ml_probability:.2f}%"]
             ]
-            table = Table(data)
-            table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 12),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black)
-            ]))
+            table = Table(data, colWidths=[200, A4[0] - 280])
+            table.setStyle(table_style)
             story.append(table)
-            story.append(Spacer(1, 12))
-
-            # Visualizations (add images if they exist)
-            story.append(Paragraph("Visualizations", styles['Heading2']))
+            story.append(Spacer(1, 30))
+            # Visualizations
+            story.append(Paragraph("Visualizations", styles['SectionHeading']))
             for plot_path, title in plot_paths:
                 if os.path.exists(plot_path):
-                    story.append(Paragraph(title, styles['Heading3']))
-                    story.append(Image(plot_path, width=500, height=300))
-                    story.append(Spacer(1, 12))
-
+                    try:
+                        story.append(Paragraph(safe_str(title), styles['Heading3']))
+                        story.append(Image(plot_path, width=A4[0] - 80, height=300, kind='proportional'))
+                        story.append(Spacer(1, 10))
+                    except Exception as e:
+                        logger.error(f"Failed to add plot {plot_path} to PDF: {e}")
             # Build PDF
             doc.build(story)
             with open(pdf_path, 'wb') as f:
                 f.write(pdf_buffer.getvalue())
             logger.info(f"Saved PDF report: {pdf_path}")
             out["pdf_path"] = str(pdf_path)
-
         except Exception as e:
             logger.error(f"Failed to generate PDF with ReportLab: {e}")
             out["pdf_path"] = None
@@ -1124,114 +1096,122 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
 
         # Save decision JSON and log
         print("[11/11] Saving decision JSON and log...")
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        record = {
-            "timestamp": timestamp,
-            "file": str(input_path),
-            "cibil": cibil_score,
-            "heuristic_action": heuristic_decision.get("Action"),
-            "heuristic_score": heuristic_decision.get("Total Score"),
-            "heuristic_reason": heuristic_decision.get("Reason"),
-            "ml_prediction": ml_result.get("model_prediction") if ml_result else None,
-            "ml_probability": ml_result.get("model_probability") if ml_result else None
-        }
-        decision_json = decisions_dir / f"{input_path.stem}_decision.json"
-        with open(decision_json, "w", encoding="utf-8") as f:
-            json.dump(record, f, indent=2)
-        log_csv = decisions_dir / "decisions_log.csv"
-        pd.DataFrame([record]).to_csv(log_csv, mode='a', header=not log_csv.exists(), index=False)
-        print("Decision JSON saved:", decision_json)
-        print("Decision log appended:", log_csv)
-        out["decision_json"] = str(decision_json)
-        
+        try:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            record = {
+                "timestamp": timestamp,
+                "file": str(input_path),
+                "cibil": cibil_score,
+                "heuristic_action": heuristic_decision.get("Action"),
+                "heuristic_score": heuristic_decision.get("Total Score"),
+                "heuristic_reason": heuristic_decision.get("Reason"),
+                "ml_prediction": ml_result.get("model_prediction") if ml_result else None,
+                "ml_probability": ml_result.get("model_probability") if ml_result else None
+            }
+            decision_json = decisions_dir / f"{input_path.stem}_decision.json"
+            with open(decision_json, "w", encoding="utf-8") as f:
+                json.dump(record, f, indent=2)
+            log_csv = decisions_dir / "decisions_log.csv"
+            pd.DataFrame([record]).to_csv(log_csv, mode='a', header=not log_csv.exists(), index=False)
+            print("Decision JSON saved:", decision_json)
+            print("Decision log appended:", log_csv)
+            out["decision_json"] = str(decision_json)
+        except Exception as e:
+            logger.error(f"Failed to save decision JSON/log: {e}")
+
         # Display report in Streamlit
         if 'st' in globals():
-            st.markdown("### Loan Eligibility Report")
-            st.markdown(f"**Generated on:** {timestamp}")
-            st.markdown("#### Applicant Data")
-            st.table({
-                "Name": [applicant_name],
-                "Account Number": [account_number],
-                "CIBIL Score": [cibil_score]
-            })
-            st.markdown("#### Income & Stability")
-            st.table({
-                "Average Monthly Income": [f"₹{avg_monthly_income:,.2f}"],
-                "Income Variability Index": [f"{income_variability_index:.2f}"],
-                "Number of Income Sources": [num_income_sources],
-                "Recent Salary Trend": [f"{recent_salary_trend:.2f}%"]
-            })
-            st.markdown("#### Expenses & Lifestyle")
-            st.table({
-                "Average Monthly Expenses": [f"₹{avg_monthly_expenses:,.2f}"],
-                "Savings Ratio": [f"{savings_ratio:.2f}%"],
-                "Discretionary Spending": [f"{discretionary_spending:.2f}%"],
-                "High-Cost EMI Payments": [f"₹{high_cost_emi:,.2f}"]
-            })
-            st.markdown("#### Debt Metrics")
-            st.table({
-                "DTI Ratio": [f"{dti_ratio:.2f}%"],
-                "Existing Loan Count": [existing_loan_count],
-                "Credit Card Payments": [f"₹{credit_card_payments:,.2f}"],
-                "Bounced Cheques Count": [bounced_cheques_count]
-            })
-            st.markdown("#### Cash Flow & Liquidity")
-            st.table({
-                "Minimum Monthly Balance": [f"₹{min_monthly_balance:,.2f}"],
-                "Average Closing Balance": [f"₹{avg_closing_balance:,.2f}"],
-                "Overdraft Usage Frequency": [overdraft_frequency],
-                "Negative Balance Days": [negative_balance_days]
-            })
-            st.markdown("#### Creditworthiness Indicators")
-            st.table({
-                "CIBIL Score": [cibil_score],
-                "Payment History": ["Derived from statement"],
-                "Delinquency Flags": [delinquency_flags],
-                "Recent Loan Inquiries": ["Not available"]
-            })
-            st.markdown("#### Fraud & Compliance Checks")
-            st.table({
-                "Sudden High-Value Credits": [sudden_high_value_credits],
-                "Circular Transactions": [circular_transactions],
-                "Salary Mismatch": ["Not detected"],
-                "Blacklisted Accounts": ["Not detected"]
-            })
-            st.markdown("#### Decision Metrics")
-            st.table({
-                "Bank Score": [f"{bank_score:.2f}/100"],
-                "DTI Ratio": [f"{dti_ratio:.2f}%"],
-                "Average Closing Balance": [f"₹{avg_closing_balance:,.2f}"],
-                "CIBIL Score": [cibil_score],
-                "Bounced Cheques": [bounced_cheques_count]
-            })
-            st.markdown("#### Final Decision")
-            if final_action.lower() == "approve":
-                st.success(f"**{final_action}**: {final_reason}")
-            else:
-                st.error(f"**{final_action}**: {final_reason}")
-            st.markdown("#### ML Model Prediction")
-            st.table({
-                "Prediction": [ml_prediction],
-                "Confidence": [f"{ml_probability:.2f}%"]
-            })
-            st.markdown("#### Visualizations")
-            for plot_path, title in plot_paths:
-                if os.path.exists(plot_path):
-                    st.image(plot_path, caption=title, use_container_width=True)
-            if out["pdf_path"] and os.path.exists(out["pdf_path"]):
-                with open(out["pdf_path"], "rb") as f:
-                    st.download_button(
-                        label="📥 Download PDF Report",
-                        data=f,
-                        file_name=f"{sanitized_name}_{cibil_score}_report.pdf",
-                        mime="application/pdf",
-                        key=f"download_report_{sanitized_name}"
-                    )
-            else:
-                st.error("PDF report not available for download.")
+            try:
+                st.markdown("### Loan Eligibility Report")
+                st.markdown(f"**Generated on:** {timestamp}")
+                st.markdown("#### Applicant Data")
+                st.table({
+                    "Name": [applicant_name],
+                    "Account Number": [account_number],
+                    "CIBIL Score": [cibil_score]
+                })
+                st.markdown("#### Income & Stability")
+                st.table({
+                    "Average Monthly Income": [f"₹{avg_monthly_income:,.2f}"],
+                    "Income Variability Index": [f"{income_variability_index:.2f}"],
+                    "Number of Income Sources": [num_income_sources],
+                    "Recent Salary Trend": [f"{recent_salary_trend:.2f}%"]
+                })
+                st.markdown("#### Expenses & Lifestyle")
+                st.table({
+                    "Average Monthly Expenses": [f"₹{avg_monthly_expenses:,.2f}"],
+                    "Savings Ratio": [f"{savings_ratio:.2f}%"],
+                    "Discretionary Spending": [f"{discretionary_spending:.2f}%"],
+                    "High-Cost EMI Payments": [f"₹{high_cost_emi:,.2f}"]
+                })
+                st.markdown("#### Debt Metrics")
+                st.table({
+                    "DTI Ratio": [f"{dti_ratio:.2f}%"],
+                    "Existing Loan Count": [existing_loan_count],
+                    "Credit Card Payments": [f"₹{credit_card_payments:,.2f}"],
+                    "Bounced Cheques Count": [bounced_cheques_count]
+                })
+                st.markdown("#### Cash Flow & Liquidity")
+                st.table({
+                    "Minimum Monthly Balance": [f"₹{min_monthly_balance:,.2f}"],
+                    "Average Closing Balance": [f"₹{avg_closing_balance:,.2f}"],
+                    "Overdraft Usage Frequency": [overdraft_frequency],
+                    "Negative Balance Days": [negative_balance_days]
+                })
+                st.markdown("#### Creditworthiness Indicators")
+                st.table({
+                    "CIBIL Score": [cibil_score],
+                    "Payment History": ["Derived from statement"],
+                    "Delinquency Flags": [delinquency_flags],
+                    "Recent Loan Inquiries": ["Not available"]
+                })
+                st.markdown("#### Fraud & Compliance Checks")
+                st.table({
+                    "Sudden High-Value Credits": [sudden_high_value_credits],
+                    "Circular Transactions": [circular_transactions],
+                    "Salary Mismatch": ["Not detected"],
+                    "Blacklisted Accounts": ["Not detected"]
+                })
+                st.markdown("#### Decision Metrics")
+                st.table({
+                    "Bank Score": [f"{bank_score:.2f}/100"],
+                    "DTI Ratio": [f"{dti_ratio:.2f}%"],
+                    "Average Closing Balance": [f"₹{avg_closing_balance:,.2f}"],
+                    "CIBIL Score": [cibil_score],
+                    "Bounced Cheques": [bounced_cheques_count]
+                })
+                st.markdown("#### Final Decision")
+                if final_action.lower() == "approve":
+                    st.success(f"**{final_action}**: {final_reason}")
+                else:
+                    st.error(f"**{final_action}**: {final_reason}")
+                st.markdown("#### ML Model Prediction")
+                st.table({
+                    "Prediction": [ml_prediction],
+                    "Confidence": [f"{ml_probability:.2f}%"]
+                })
+                st.markdown("#### Visualizations")
+                for plot_path, title in plot_paths:
+                    if os.path.exists(plot_path):
+                        st.image(plot_path, caption=title, use_container_width=True)
+                if out["pdf_path"] and os.path.exists(out["pdf_path"]):
+                    with open(out["pdf_path"], "rb") as f:
+                        st.download_button(
+                            label="📥 Download PDF Report",
+                            data=f,
+                            file_name=f"{sanitized_name}_{cibil_score}_report.pdf",
+                            mime="application/pdf",
+                            key=f"download_report_{sanitized_name}"
+                        )
+                else:
+                    st.error("PDF report not available for download.")
+            except Exception as e:
+                logger.error(f"Failed to display Streamlit report: {e}")
+                st.error(f"Failed to display report: {e}")
+
         out["report_text"] = html_str
+       
     except Exception as e:
         logger.error(f"Error in analysis: {e}")
         print(f"Error in analysis: {e}")
-
     return out
