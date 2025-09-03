@@ -16,7 +16,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
-from reportlab.lib.units import inch
+
 
 # Try to import project utils; if not available, fallback to simple helpers
 from utils.text_parser import parse_bank_statement_text
@@ -623,10 +623,10 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
         if 'st' in globals():  # Check if running in Streamlit
             st.subheader("📋 Final Decision")
             if action.lower() == "approve":
-                st.success(f"✅ {final_action} ({final_reason})")
+                st.success(f"✅ {action} ({reason})")
             else:
-                st.error(f"❌ {final_action} ({final_reason})")
-            print(f"Final Decision: {final_action}, Reason: {final_reason}")
+                st.error(f"❌ {action} ({reason})")
+            print(f"Final Decision: {action}, Reason: {reason}")
 
         # 7) Visualizations
         print("[7/8] Generating visualizations...")
@@ -661,17 +661,18 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
                     pass
 
         for func, filename in plot_functions:
-            with safe_browser():  # ✅ FIXED
-                try:
-                    fig = func(cibil_score) if 'cibil' in filename else func(categorized_df)
-                    if fig:
-                        output_path = str(plots_dir / filename)
-                        fig.write_image(output_path, engine="kaleido")
-                        plot_paths.append((output_path, filename.replace(".png", "").replace("_", " ").title()))
-                        print(f"Generated {filename}")
-                except Exception as e:
-                    print(f"Error generating {filename}: {e}")
-                    logger.error(f"Error generating {filename}: {e}")
+            try:
+                fig = func(cibil_score) if 'cibil' in filename else func(categorized_df)
+                if fig:
+                    if 'st' in globals():  # Running in Streamlit
+                        st.plotly_chart(fig, use_container_width=True)
+                    output_path = str(plots_dir / filename)
+                    fig.write_image(output_path, engine="kaleido")
+                    plot_paths.append((output_path, filename.replace(".png", "").replace("_", " ").title()))
+                    print(f"Generated {filename}")
+            except Exception as e:
+                print(f"Error generating {filename}: {e}")
+                logger.error(f"Error generating {filename}: {e}")
 
         print(f"Saved {len(plot_paths)} plots to {plots_dir}")
 
@@ -923,10 +924,12 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
                 pdfmetrics.registerFont(TTFont('Helvetica-Bold', 'Helvetica-Bold'))
             except Exception as e:
                 logger.warning(f"Failed to register fonts, using defaults: {e}")
+
             # Create PDF buffer
             pdf_buffer = io.BytesIO()
             doc = SimpleDocTemplate(pdf_buffer, pagesize=A4, leftMargin=40, rightMargin=40, topMargin=40, bottomMargin=40)
             styles = getSampleStyleSheet()
+
             # Customize styles
             styles.add(ParagraphStyle(name='HeaderTitle', fontName='Helvetica-Bold', fontSize=16, leading=20, textColor=colors.HexColor('#333333'), alignment=1))
             styles.add(ParagraphStyle(name='HeaderText', fontName='Helvetica', fontSize=10, leading=12, textColor=colors.HexColor('#333333'), alignment=1))
@@ -1120,7 +1123,7 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             logger.error(f"Failed to save decision JSON/log: {e}")
 
         # Display report in Streamlit
-        if 'st' in globals():
+        if st.runtime.exists():
             try:
                 st.markdown("### Loan Eligibility Report")
                 st.markdown(f"**Generated on:** {timestamp}")
