@@ -19,6 +19,9 @@ import pandas as pd
 import hashlib
 import base64
 
+import os
+os.environ["STREAMLIT_SERVER_FILE_WATCHER_TYPE"] = "none"
+
 # Setup logging
 logging.basicConfig(level=logging.INFO, filename='appp.log', filemode='a', format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)

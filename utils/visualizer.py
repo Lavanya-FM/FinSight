@@ -2,7 +2,7 @@ import os
 import re
 import json
 import pickle
-import argparse
+import io
 import base64
 import logging
 import fitz  # PyMuPDF
@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from weasyprint import HTML  # Added for HTML-to-PDF conversion
 
-from reportlab.lib.pagesizes import letter
+from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
@@ -888,14 +888,239 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
         out["html_path"] = str(html_path)
         out["report_text"] = html_str
 
-        # Convert HTML to PDF
+        # Generate PDF using ReportLab
         try:
-            HTML(str(html_path)).write_pdf(pdf_path)
+            # Create PDF buffer
+            pdf_buffer = io.BytesIO()
+            doc = SimpleDocTemplate(pdf_buffer, pagesize=A4)
+            styles = getSampleStyleSheet()
+            story = []
+
+            # Add title
+            story.append(Paragraph("Loan Eligibility Report", styles['Title']))
+            story.append(Paragraph(f"Generated on: {timestamp}", styles['Normal']))
+            story.append(Spacer(1, 12))
+
+            # Applicant Data
+            story.append(Paragraph("Applicant Data", styles['Heading2']))
+            data = [
+                ["Name", applicant_name],
+                ["Account Number", account_number],
+                ["CIBIL Score", str(cibil_score)]
+            ]
+            table = Table(data)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 12),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            story.append(table)
+            story.append(Spacer(1, 12))
+
+            # Income & Stability
+            story.append(Paragraph("Income & Stability", styles['Heading2']))
+            data = [
+                ["Average Monthly Income", f"₹{avg_monthly_income:,.2f}"],
+                ["Income Variability Index", f"{income_variability_index:.2f}"],
+                ["Number of Income Sources", str(num_income_sources)],
+                ["Recent Salary Trend", f"{recent_salary_trend:.2f}%"]
+            ]
+            table = Table(data)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 12),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            story.append(table)
+            story.append(Spacer(1, 12))
+
+            # Expenses & Lifestyle
+            story.append(Paragraph("Expenses & Lifestyle", styles['Heading2']))
+            data = [
+                ["Average Monthly Expenses", f"₹{avg_monthly_expenses:,.2f}"],
+                ["Savings Ratio", f"{savings_ratio:.2f}%"],
+                ["Discretionary Spending", f"{discretionary_spending:.2f}%"],
+                ["High-Cost EMI Payments", f"₹{high_cost_emi:,.2f}"]
+            ]
+            table = Table(data)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 12),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            story.append(table)
+            story.append(Spacer(1, 12))
+
+            # Debt Metrics
+            story.append(Paragraph("Debt Metrics", styles['Heading2']))
+            data = [
+                ["DTI Ratio", f"{dti_ratio:.2f}%"],
+                ["Existing Loan Count", str(existing_loan_count)],
+                ["Credit Card Payments", f"₹{credit_card_payments:,.2f}"],
+                ["Bounced Cheques Count", str(bounced_cheques_count)]
+            ]
+            table = Table(data)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 12),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            story.append(table)
+            story.append(Spacer(1, 12))
+
+            # Cash Flow & Liquidity
+            story.append(Paragraph("Cash Flow & Liquidity", styles['Heading2']))
+            data = [
+                ["Minimum Monthly Balance", f"₹{min_monthly_balance:,.2f}"],
+                ["Average Closing Balance", f"₹{avg_closing_balance:,.2f}"],
+                ["Overdraft Usage Frequency", str(overdraft_frequency)],
+                ["Negative Balance Days", str(negative_balance_days)]
+            ]
+            table = Table(data)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 12),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            story.append(table)
+            story.append(Spacer(1, 12))
+
+            # Creditworthiness Indicators
+            story.append(Paragraph("Creditworthiness Indicators", styles['Heading2']))
+            data = [
+                ["CIBIL Score", str(cibil_score)],
+                ["Payment History", "Derived from statement"],
+                ["Delinquency Flags", str(delinquency_flags)],
+                ["Recent Loan Inquiries", "Not available"]
+            ]
+            table = Table(data)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 12),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            story.append(table)
+            story.append(Spacer(1, 12))
+
+            # Fraud & Compliance Checks
+            story.append(Paragraph("Fraud & Compliance Checks", styles['Heading2']))
+            data = [
+                ["Sudden High-Value Credits", str(sudden_high_value_credits)],
+                ["Circular Transactions", str(circular_transactions)],
+                ["Salary Mismatch", "Not detected"],
+                ["Blacklisted Accounts", "Not detected"]
+            ]
+            table = Table(data)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 12),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            story.append(table)
+            story.append(Spacer(1, 12))
+
+            # Decision Metrics
+            story.append(Paragraph("Decision Metrics", styles['Heading2']))
+            data = [
+                ["Bank Score", f"{bank_score:.2f}/100"],
+                ["DTI Ratio", f"{dti_ratio:.2f}%"],
+                ["Average Closing Balance", f"₹{avg_closing_balance:,.2f}"],
+                ["CIBIL Score", str(cibil_score)],
+                ["Bounced Cheques", str(bounced_cheques_count)]
+            ]
+            table = Table(data)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 12),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            story.append(table)
+            story.append(Spacer(1, 12))
+
+            # Final Decision
+            story.append(Paragraph("Final Decision", styles['Heading2']))
+            story.append(Paragraph(f"<b>{final_action}</b>: {final_reason}", styles['Normal']))
+            story.append(Spacer(1, 12))
+
+            # ML Model Prediction
+            story.append(Paragraph("ML Model Prediction", styles['Heading2']))
+            data = [
+                ["Prediction", ml_prediction],
+                ["Confidence", f"{ml_probability:.2f}%"]
+            ]
+            table = Table(data)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 12),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            story.append(table)
+            story.append(Spacer(1, 12))
+
+            # Visualizations (add images if they exist)
+            story.append(Paragraph("Visualizations", styles['Heading2']))
+            for plot_path, title in plot_paths:
+                if os.path.exists(plot_path):
+                    story.append(Paragraph(title, styles['Heading3']))
+                    story.append(Image(plot_path, width=500, height=300))
+                    story.append(Spacer(1, 12))
+
+            # Build PDF
+            doc.build(story)
+            with open(pdf_path, 'wb') as f:
+                f.write(pdf_buffer.getvalue())
             logger.info(f"Saved PDF report: {pdf_path}")
             out["pdf_path"] = str(pdf_path)
+
         except Exception as e:
-            logger.error(f"Failed to convert HTML to PDF: {e}")
+            logger.error(f"Failed to generate PDF with ReportLab: {e}")
             out["pdf_path"] = None
+            print("PDF generation failed. HTML report available.")
 
         # Save decision JSON and log
         print("[11/11] Saving decision JSON and log...")

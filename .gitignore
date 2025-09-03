@@ -8,4 +8,6 @@ temp/
 cleaned_csvs/
 *.csv
 bank/
-
+*.env
+.streamlit/
+*training_log
