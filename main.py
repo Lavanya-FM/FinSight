@@ -19,11 +19,10 @@ import pandas as pd
 import hashlib
 import base64
 
-import os
 os.environ["STREAMLIT_SERVER_FILE_WATCHER_TYPE"] = "none"
 
 # Setup logging
-logging.basicConfig(level=logging.INFO, filename='appp.log', filemode='a', format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, filename='app.log', filemode='a', format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Page config
@@ -47,7 +46,7 @@ def initialize_session_state():
         "upload_counter": 0,
         "show_profile": False,
         "show_forgot_password": False,
-        "show_reset_password": False,  # Ensure this is always initialized
+        "show_reset_password": False, 
         "cibil_score": None,
         "show_cibil_input": False,
         "show_activity": False,
@@ -243,6 +242,7 @@ def generate_captcha():
     answer = num1 + num2 if operator == '+' else num1 - num2 if operator == '-' else num1 * num2
     return {"question": f"{num1} {operator} {num2} = ?", "answer": str(answer).strip()}
 
+# Initialize CAPTCHA if needed
 if st.session_state["current_tab"] == "login" and not st.session_state["login_captcha"]:
     st.session_state["login_captcha"] = generate_captcha()
 elif st.session_state["current_tab"] == "register" and not st.session_state["register_captcha"]:

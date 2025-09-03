@@ -10,4 +10,5 @@ cleaned_csvs/
 bank/
 *.env
 .streamlit/
-*training_log
+official_models/
+training_log
