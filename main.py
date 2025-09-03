@@ -18,7 +18,7 @@ from supabase import create_client
 import pandas as pd
 import hashlib
 import base64
-
+from visualizer import analyze_file
 os.environ["STREAMLIT_SERVER_FILE_WATCHER_TYPE"] = "none"
 
 # Setup logging
@@ -611,14 +611,17 @@ else:
                                 st.success(f"File uploaded: {uploaded_file.name}")
                                 if st.session_state.get("cibil_score") is not None:
                                     try:
-                                        client.table("uploaded_files").update({"cibil_score": st.session_state["cibil_score"]}).eq("file_id", file_id).execute()
-                                        st.success(f"✅ CIBIL score {st.session_state['cibil_score']} associated with file: {uploaded_file.name}")
-                                        st.session_state["file_id"] = file_id
+                                        # Use admin_client for the update to bypass context issues
+                                        update_response = admin_client.table("uploaded_files").update({"cibil_score": st.session_state["cibil_score"]}).eq("file_id", file_id).execute()
+                                        if update_response.data:
+                                            st.success(f"✅ CIBIL score {st.session_state['cibil_score']} associated with file: {uploaded_file.name}")
+                                            st.session_state["file_id"] = file_id
+                                        else:
+                                            st.error(f"❌ Failed to associate CIBIL score: {update_response.error}")
                                     except Exception as e:
                                         logger.error(f"Failed to associate CIBIL score with file_id={file_id}: {str(e)}")
                                         st.error(f"❌ Failed to associate CIBIL score: {str(e)}")
-                                try:
-                                    from visualizer import analyze_file
+                                try:    
                                     with st.spinner("Analyzing file..."):
                                         analysis_result = analyze_file(tmp_path)
                                         if isinstance(analysis_result, dict):
