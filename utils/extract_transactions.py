@@ -8,7 +8,6 @@ import pandas as pd
 import numpy as np
 import os
 import io
-import cv2
 import docx2txt
 import chardet
 from datetime import datetime
