@@ -618,7 +618,7 @@ else:
                                         logger.error(f"Failed to associate CIBIL score with file_id={file_id}: {str(e)}")
                                         st.error(f"❌ Failed to associate CIBIL score: {str(e)}")
                                 try:
-                                    from app import analyze_file
+                                    from utils.visualizer import analyze_file
                                     with st.spinner("Analyzing file..."):
                                         analysis_result = analyze_file(tmp_path)
                                         if isinstance(analysis_result, dict):
