@@ -577,20 +577,22 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
         try:
             if 'score_and_decide' in globals():
                 heuristic_decision = score_and_decide(metrics_df=metrics_df, cibil_score=cibil_score, categorized_file=str(categorized_csv_path))
+                if not isinstance(heuristic_decision, dict):
+                    logger.error(f"score_and_decide returned invalid result: {heuristic_decision}")
+                    heuristic_decision = {"Action": "Review", "Reason": "Invalid output from score_and_decide"}
             else:
+                logger.warning("score_and_decide not found, using fallback logic")
                 # Simple fallback decision logic
-                avg_income = metrics_df['Average Monthly Income'].iloc[0]
-                red_flags = metrics_df['Red Flag Count'].iloc[0]
-
+                avg_income = metrics_df['Average Monthly Income'].iloc[0] if not metrics_df.empty and 'Average Monthly Income' in metrics_df.columns else 0.0
+                red_flags = metrics_df['Red Flag Count'].iloc[0] if not metrics_df.empty and 'Red Flag Count' in metrics_df.columns else 0
                 if avg_income >= 30000 and red_flags == 0 and cibil_score >= 650:
                     heuristic_decision = {"Action": "Approve", "Reason": "Good income and credit profile"}
                 else:
                     heuristic_decision = {"Action": "Reject", "Reason": "Insufficient income or credit issues"}
-
         except Exception as e:
-            print(f"Decision logic error: {e}")
+            logger.error(f"Decision logic error: {e}")
             heuristic_decision = {"Action": "Review", "Reason": f"Error in decision logic: {e}"}
-            print("Heuristic decision:", heuristic_decision)
+        print("Heuristic decision:", heuristic_decision)
 
         # 5) ML model prediction
         print("[5/8] ML model integration (if model exists)...")
@@ -599,26 +601,32 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
         ml_result = None
         if model is not None:
             try:
-                ml_result = model_predict_and_explain(model, metrics_df) if 'model_predict_and_explain' in globals() else None
+                ml_result_temp = model_predict_and_explain(model, metrics_df) if 'model_predict_and_explain' in globals() else None
+                if isinstance(ml_result_temp, dict):
+                    ml_result = ml_result_temp
+                else:
+                    logger.error(f"model_predict_and_explain returned invalid result: {ml_result_temp}")
             except Exception as e:
                 print(f"[ERROR] ML model prediction failed: {e}")
                 logger.error(f"ML model prediction failed: {e}")
                 ml_result = None
         else:
-            print(f"No ML model found at {model_path}")
+            logger.warning(f"No ML model found at {model_path}")
+        print(f"[DEBUG] ML result: {ml_result}")
 
         # 6) Combine heuristic and ML decisions
         print("[6/8] Final decision reconciliation...")
+        if not isinstance(heuristic_decision, dict):
+            logger.error(f"heuristic_decision is not a dict: {heuristic_decision}")
+            heuristic_decision = {"Action": "Review", "Reason": "Invalid heuristic decision output"}
         final_decision = heuristic_decision
-        if ml_result and isinstance(ml_result, dict) and ml_result.get("model_probability", 0) >= 70:
+        if isinstance(ml_result, dict) and ml_result.get("model_probability", 0) >= 70:
             final_action = ml_result.get("model_prediction", "Unknown")
             final_reason = f"ML-based decision (confidence: {ml_result.get('model_probability', 0)}%)"
         else:
             final_action = heuristic_decision.get("Action", "Unknown")
             final_reason = heuristic_decision.get("Reason", "No reason provided")
-
-            logger.info(f"Using heuristic decision (ML confidence {ml_result.get('model_probability', 0)}% or model unavailable)")
-
+            logger.info(f"Using heuristic decision (ML confidence {ml_result.get('model_probability', 0) if isinstance(ml_result, dict) else 0}% or model unavailable)")
         # Display decision (Streamlit-compatible)
         action = final_decision.get("Action", "Unknown")
         reason = final_decision.get("Reason", "No reason provided")
