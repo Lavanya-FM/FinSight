@@ -623,6 +623,7 @@ else:
                                         st.error(f"❌ Failed to associate CIBIL score: {str(e)}")
                                 try:    
                                     with st.spinner("Analyzing file..."):
+                                        logger.info(f"Starting analysis for file: {uploaded_file.name}, cibil_score: {st.session_state.get('cibil_score')}")
                                         analysis_result = analyze_file(tmp_path, st.session_state["cibil_score"])
                                         if isinstance(analysis_result, dict):
                                             decision_json_path = analysis_result.get("decision_json")

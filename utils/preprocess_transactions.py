@@ -8,21 +8,11 @@ import re
 from datetime import datetime
 
 def make_arrow_compatible(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Ensures DataFrame columns are Arrow-compatible for Streamlit display.
-    Fixes datetime, numeric, boolean, and string types.
-    """
     df = df.copy()
-
-    # Convert datetime → string
     for col in df.select_dtypes(include=["datetime64[ns]", "datetimetz"]).columns:
         df[col] = df[col].astype(str)
-
-    # Explicitly handle 'Date' column
     if "Date" in df.columns:
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.strftime("%Y-%m-%d")
-
-    # Convert monetary/metric columns to float64
     money_cols = [
         "Debit", "Credit", "Balance", "Amount", "Value",
         "Average Monthly Income", "Average Monthly Expenses", "Net Surplus",
@@ -35,7 +25,7 @@ def make_arrow_compatible(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = (
                 df[col]
                 .astype(str)
-                .str.replace(r"[₹,$£,%]", "", regex=True)  # also remove % symbols
+                .str.replace(r"[₹,$£,%]", "", regex=True)
                 .str.strip()
             )
             try:
@@ -43,8 +33,6 @@ def make_arrow_compatible(df: pd.DataFrame) -> pd.DataFrame:
             except Exception as e:
                 print(f"[ERROR] Failed to convert {col} to numeric: {e}")
                 df[col] = 0.0
-
-    # Convert integer columns
     int_cols = ["Year", "Month", "Red Flag Count", "Number of Open Credit Accounts"]
     for col in int_cols:
         if col in df.columns:
@@ -53,18 +41,12 @@ def make_arrow_compatible(df: pd.DataFrame) -> pd.DataFrame:
             except Exception as e:
                 print(f"[ERROR] Failed to convert {col} to int64: {e}")
                 df[col] = 0
-
-    # Convert booleans → int (Arrow safe)
     for col in df.select_dtypes(include=["bool"]).columns:
         df[col] = df[col].astype(int)
-
-    # Convert all remaining object/string → plain str
     for col in df.select_dtypes(include=["object", "string"]).columns:
         df[col] = df[col].astype(str).replace(["nan", "NaN", "<NA>", ""], "Unknown")
-
     print(f"[DEBUG] Arrow-compatible df types: {df.dtypes}")
     return df
-
 
 def detect_recurring_transactions(df: pd.DataFrame, min_occurrences=3, date_window=35) -> set:
     """

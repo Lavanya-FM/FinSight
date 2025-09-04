@@ -43,9 +43,14 @@ def calculate_income_stability(monthly_metrics, categorized_file):
 
 def calculate_net_surplus_score(net_surplus):
     """Calculate score based on net surplus relative to proposed EMI."""
-    # Convert Series to scalar if necessary
     if isinstance(net_surplus, pd.Series):
         net_surplus = net_surplus.iloc[0] if not net_surplus.empty else 0
+    if net_surplus > 0:
+        return 10.0  # Positive surplus
+    elif net_surplus >= -5000:  # Minor deficit
+        return 5.0
+    else:  # Significant deficit
+        return 0.0
 
 def calculate_dti_score(dti):
     """Calculate DTI score (20 points)."""
@@ -64,7 +69,7 @@ def calculate_expense_discipline(monthly_metrics, aggregated_metrics):
         return 0.0
     total_expenses = monthly_metrics["Average Monthly Expenses"]
     income = monthly_metrics["Average Monthly Income"]
-    discretionary = monthly_metrics.get("Discretionary Expenses", total_expenses * 0.2)
+    discretionary = monthly_metrics.get("Discretionary Expenses", total_expenses * 0.1)  # Default 10% if missing
     if total_expenses.mean() == 0 or income.mean() == 0:
         return 0.0
     proportion = (discretionary / income).mean()
@@ -100,9 +105,10 @@ def calculate_score(monthly_metrics, categorized_file, aggregated_metrics):
     if aggregated_metrics["DTI Ratio"] <= 40:
         score += 20
         components.append("Low DTI")
-    if aggregated_metrics["Savings Rate"] > 10:
-        score += 10
-        components.append("Good savings rate")
+    net_surplus_score = calculate_net_surplus_score(aggregated_metrics["Net Surplus"])
+    score += net_surplus_score
+    if net_surplus_score > 0:
+        components.append("Positive net surplus")
     
     # Red flags and stability
     if aggregated_metrics["Red Flag Count"] == 0:
@@ -126,37 +132,35 @@ def score_and_decide(metrics_df, cibil_score, categorized_file=None):
             "Reason": "No valid metrics available"
         }
 
-    # Extract metrics with safe fallbacks
-    dti_ratio = float(metrics_df['DTI Ratio'].iloc[0]) if 'DTI Ratio' in metrics_df.columns else 0.0
-    avg_balance = float(metrics_df['Average Closing Balance'].iloc[0]) if 'Average Closing Balance' in metrics_df.columns else 0.0
-    bounced_cheques = int(metrics_df['Bounced Cheques Count'].iloc[0]) if 'Bounced Cheques Count' in metrics_df.columns else 0
-    emi_payments = float(metrics_df['High-Cost EMI Payments'].iloc[0]) if 'High-Cost EMI Payments' in metrics_df.columns else 0.0
-    negative_balance_days = int(metrics_df['Negative Balance Days'].iloc[0]) if 'Negative Balance Days' in metrics_df.columns else 0
-
+    # Extract metrics with safe fallbacks and estimations
     avg_income = metrics_df["Average Monthly Income"].iloc[0] if "Average Monthly Income" in metrics_df.columns else 0.0
     avg_expenses = metrics_df["Average Monthly Expenses"].iloc[0] if "Average Monthly Expenses" in metrics_df.columns else 0.0
     net_surplus = metrics_df["Net Surplus"].iloc[0] if "Net Surplus" in metrics_df.columns else (avg_income - avg_expenses)
-    dti_ratio = metrics_df["DTI Ratio"].iloc[0] if "DTI Ratio" in metrics_df.columns else (
-        (avg_expenses / avg_income * 100) if avg_income > 0 else 0.0
-    )
+    dti_ratio = metrics_df["DTI Ratio"].iloc[0] if "DTI Ratio" in metrics_df.columns else 0.0
+    if dti_ratio == 0 and avg_income > 0:
+        estimated_emi = max(0, avg_expenses * 0.20)  # 20% of expenses as EMI
+        dti_ratio = (estimated_emi / avg_income) * 100
     savings_rate = metrics_df["Savings Rate"].iloc[0] if "Savings Rate" in metrics_df.columns else 0.0
     red_flag_count = metrics_df["Red Flag Count"].iloc[0] if "Red Flag Count" in metrics_df.columns else 0
-    discretionary_expenses = metrics_df["Discretionary Expenses"].iloc[0] if "Discretionary Expenses" in metrics_df.columns else 0.0
-    income_stability = metrics_df["Income Stability"].iloc[0] if "Income Stability" in metrics_df.columns else False
+    discretionary_expenses = metrics_df["Discretionary Expenses"].iloc[0] if "Discretionary Expenses" in metrics_df.columns else max(0, avg_expenses * 0.10)
+    income_stability_score, is_salary = calculate_income_stability(metrics_df, categorized_file)
     avg_monthly_balance = metrics_df["Average Monthly Balance"].iloc[0] if "Average Monthly Balance" in metrics_df.columns else 0.0
     cash_withdrawals = metrics_df["Cash Withdrawals"].iloc[0] if "Cash Withdrawals" in metrics_df.columns else 0.0
     open_credit_accounts = metrics_df["Number of Open Credit Accounts"].iloc[0] if "Number of Open Credit Accounts" in metrics_df.columns else 0
+    bounced_cheques = metrics_df["Bounced Cheques Count"].iloc[0] if "Bounced Cheques Count" in metrics_df.columns else 0
+    negative_balance_days = metrics_df["Negative Balance Days"].iloc[0] if "Negative Balance Days" in metrics_df.columns else 0
+    emi_payments = metrics_df["High-Cost EMI Payments"].iloc[0] if "High-Cost EMI Payments" in metrics_df.columns else max(0, avg_expenses * 0.20)
 
     # Prepare aggregated metrics
     aggregated_metrics = {
         "Average Monthly Income": float(avg_income),
         "Average Monthly Expenses": float(avg_expenses),
         "Net Surplus": float(net_surplus),
-        "DTI Ratio": float(dti_ratio),   # Keep consistent key
+        "DTI Ratio": float(dti_ratio),
         "Savings Rate": float(savings_rate),
         "Red Flag Count": int(red_flag_count),
         "Discretionary Expenses": float(discretionary_expenses),
-        "Income Stability": bool(income_stability),
+        "Income Stability": bool(is_salary),
         "Average Monthly Balance": float(avg_monthly_balance),
         "Cash Withdrawals": float(cash_withdrawals),
         "Number of Open Credit Accounts": int(open_credit_accounts)
@@ -184,7 +188,7 @@ def score_and_decide(metrics_df, cibil_score, categorized_file=None):
 
     # Adjust score with CIBIL
     try:
-        cibil_risk = check_cibil_risk(cibil_score)  # Assume returns "Low", "Moderate", or "High"
+        cibil_risk = check_cibil_risk(cibil_score)
         cibil_modifier = 10 if cibil_risk == "Low" else 0 if cibil_risk == "Moderate" else -10
         components.append(f"CIBIL risk adjustment: {cibil_risk}")
     except Exception as e:
@@ -199,17 +203,17 @@ def score_and_decide(metrics_df, cibil_score, categorized_file=None):
     if open_credit_accounts <= 3:
         total_score += 5
         components.append("Low number of open credit accounts")
-    if income_stability:
+    if is_salary:
         total_score += 5
         components.append("Stable income")
 
     # Ensure bounds
     total_score = min(100, max(30, total_score))
 
-    # Risk level
+    # Risk level and decision
     risk_level = "Low" if total_score >= 80 else "Moderate" if total_score >= 60 else "High"
     if (dti_ratio < 40 and cibil_score >= 700 and bounced_cheques == 0 and
-        avg_balance >= 2 * emi_payments):
+        avg_monthly_balance >= 2 * emi_payments):
         action = "Approve"
         risk_level = "Low"
         reason = "Low DTI, high CIBIL, no bounces, sufficient balance"
@@ -222,25 +226,12 @@ def score_and_decide(metrics_df, cibil_score, categorized_file=None):
         action = "Review Manually"
         risk_level = "Moderate"
         reason = "Borderline metrics (DTI 40-50%, CIBIL 600-700)"
-    return {
-        "Total Score": total_score,
-        "Risk Level": risk_level,
-        "Action": action,
-        "Reason": reason
-    }
-    # Final decision
-    if risk_level == "Low":
-        action = "Approve with standard terms"
-    elif risk_level == "Moderate":
-        action = "Approve with caution"
-    else:
-        action = "Reject"
 
     return {
         "Total Score": round(total_score, 1),
         "Risk Level": risk_level,
         "Action": action,
-        "Reason": f"Score {total_score:.1f}, CIBIL {cibil_score}, Net Surplus {net_surplus:.2f}, DTI {dti_ratio:.2f}",
+        "Reason": reason,
         "Components": components
     }
 
@@ -265,7 +256,7 @@ def score_bank_statements(input_folder, categorized_folder, loan_file, output_fi
                     "Average Monthly Income": monthly_metrics["Average Monthly Income"].mean(),
                     "Average Monthly Expenses": monthly_metrics["Average Monthly Expenses"].mean(),
                     "Net Surplus": monthly_metrics["Net Surplus"].sum(),
-                    "Debt-to-Income (%)": monthly_metrics["Debt-to-Income (%)"].mean(),
+                    "DTI Ratio": monthly_metrics["DTI Ratio"].mean(),
                     "Savings Rate (%)": monthly_metrics["Savings Rate (%)"].mean(),
                     "Red Flag Count": monthly_metrics["Red Flag Count"].sum(),
                     "Discretionary Expenses": monthly_metrics["Discretionary Expenses"].mean(),

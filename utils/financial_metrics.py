@@ -13,15 +13,7 @@ logger = logging.getLogger(__name__)
 from utils.preprocess_transactions import make_arrow_compatible
 
 def enforce_schema(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Enforce schema for Arrow/Streamlit compatibility:
-    - Ensure all expected columns exist
-    - Convert money-like metrics to float64
-    - Convert flags to int64/bool
-    - Convert datetimes to string
-    """
     df = df.copy()
-
     expected_cols = {
         "Average Monthly Income": 0.0,
         "Average Monthly Expenses": 0.0,
@@ -39,12 +31,9 @@ def enforce_schema(df: pd.DataFrame) -> pd.DataFrame:
         "MonthStart": pd.NaT,
         "Value": 0.0,
     }
-
     for col, default in expected_cols.items():
         if col not in df.columns:
             df[col] = default
-
-    # Ensure floats
     float_cols = [c for c, v in expected_cols.items() if isinstance(v, float)]
     for c in float_cols:
         df[c] = (
@@ -52,8 +41,6 @@ def enforce_schema(df: pd.DataFrame) -> pd.DataFrame:
             .fillna(0.0)
             .astype("float64")
         )
-
-    # Ensure ints
     int_cols = [c for c, v in expected_cols.items() if isinstance(v, int)]
     for c in int_cols:
         df[c] = (
@@ -61,25 +48,18 @@ def enforce_schema(df: pd.DataFrame) -> pd.DataFrame:
             .fillna(0)
             .astype("int64")
         )
-
-    # Ensure bools
     bool_cols = [c for c, v in expected_cols.items() if isinstance(v, bool)]
     for c in bool_cols:
         df[c] = df[c].astype(bool)
-
-    # Handle datetime → string
     if "MonthStart" in df.columns:
         df["MonthStart"] = (
             pd.to_datetime(df["MonthStart"], errors="coerce")
             .dt.strftime("%Y-%m-%d")
             .fillna("Unknown")
         )
-
-    # Force all object → string
     for col in df.columns:
         if df[col].dtype == "object":
             df[col] = df[col].astype(str).replace(["nan", "NaN", "<NA>"], "Unknown")
-
     return df
 
 def _ensure_cols(df: pd.DataFrame, cols_with_defaults: dict) -> pd.DataFrame:
@@ -242,24 +222,21 @@ def check_salary_stability(df: pd.DataFrame) -> bool:
         return False
 
 def identify_high_value_transactions(df: pd.DataFrame, amount_col="Debit", threshold=None) -> pd.Series:
-    """High-value detector using IQR rule by default."""
     if amount_col not in df.columns:
         logger.warning(f"[WARN] Column {amount_col} not found for high-value detection")
         return pd.Series([False] * len(df), index=df.index)
-
     amounts = pd.to_numeric(df[amount_col], errors="coerce").dropna()
     if amounts.empty:
         logger.warning(f"[WARN] No valid {amount_col} data to detect high-value transactions")
         return pd.Series([False] * len(df), index=df.index)
-
     if threshold is None:
         q1, q3 = amounts.quantile(0.25), amounts.quantile(0.75)
         iqr = q3 - q1
         threshold = q3 + 1.5 * iqr
-
     mask = pd.to_numeric(df[amount_col], errors="coerce") > threshold
     logger.info(f"[DEBUG] Identified {mask.sum()} high-value transactions with threshold {threshold}")
     return mask.fillna(False)
+
 
 def recurring_transactions(group: pd.DataFrame, keywords=None, amount_col="Debit") -> pd.Series:
     """Detect recurring transactions via clustering + keyword rules."""

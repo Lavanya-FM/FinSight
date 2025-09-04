@@ -127,11 +127,17 @@ def enforce_metrics_schema(df):
          / df["Average Monthly Income"]) * 100.0,
         0.0
     )
+    
+    emi_payments = df["Average Monthly EMI"].sum()
+    if emi_payments == 0 and df.get("Debit", pd.Series([0.0])).sum() > 0:
+        emi_payments = max(0, df[df["Category"] == "Fixed Expenses"]["Debit"].sum() * 0.20)
+    df["Average Monthly EMI"] = emi_payments
     df["DTI Ratio"] = np.where(
         df["Average Monthly Income"] > 0,
         (df["Average Monthly EMI"] / df["Average Monthly Income"]) * 100.0,
         0.0
     )
+
     df["Savings Rate"] = df["Savings Rate"].astype("float64")
     df["DTI Ratio"] = df["DTI Ratio"].astype("float64")
     if 'Month' in df.columns:
@@ -208,22 +214,48 @@ def basic_parse_text_to_df(text):
 
 def parse_pdf_to_df(pdf_path):
     if fitz is None:
-        raise RuntimeError("PyMuPDF (fitz) not installed; install with 'pip install PyMuPDF'")
-    with fitz.open(pdf_path) as doc:
-        text = "\n".join([page.get_text() for page in doc])
-        if text.strip():
-            return basic_parse_text_to_df(text)
-        else:
-            # Fallback for scanned PDFs
-            data = []
-            for page_num in range(doc.page_count):
-                page = doc[page_num]
-                pix = page.get_pixmap(matrix=fitz.Matrix(300/72, 300/72))
-                text = page.get_text("text")
-                if text.strip():
-                    data.append(basic_parse_text_to_df(text))
-            df = pd.concat(data, ignore_index=True) if data else pd.DataFrame()
-            return df if not df.empty else basic_parse_text_to_df("")
+        raise RuntimeError("PyMuPDF (fitz) not installed; install with `pip install pymupdf`.")
+    text = ""
+    try:
+        with fitz.open(pdf_path) as doc:
+            for page in doc:
+                text += page.get_text("text") + "\n"
+    except FileNotFoundError as e:
+        print(f"PDF file not found: {e}")
+        # Proceed with empty text for fallback
+    except Exception as e:
+        print(f"Unexpected error opening PDF: {e}")
+        # Proceed with empty text for fallback
+
+    if parse_bank_statement_text:
+        try:
+            df = parse_bank_statement_text(text)
+            df = standardize_columns(df)
+            if 'Date' in df.columns:
+                df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
+                df["Date"] = df["Date"].fillna(pd.Timestamp("2025-01-01"))
+            else:
+                print("Warning: No 'Date' column after advanced parsing. Returning empty DataFrame.")
+                return pd.DataFrame(columns=["Date", "Description", "Debit", "Credit", "Balance"])
+            return df
+        except Exception:
+            pass
+    df = basic_parse_text_to_df(text)
+    df = standardize_columns(df)
+    if 'Date' in df.columns:
+        df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
+        df["Date"] = df["Date"].fillna(pd.Timestamp("2025-01-01"))
+    else:
+        print("Warning: No 'Date' column after basic parsing. Returning empty DataFrame.")
+        return pd.DataFrame(columns=["Date", "Description", "Debit", "Credit", "Balance"])
+    if text.strip():
+        df = parse_bank_statement_text(text)
+        logger.info(f"[DEBUG] Parsed DataFrame from text, shape: {df.shape}, columns: {df.columns.tolist()}")
+    else:
+        logger.warning("[DEBUG] No text extracted from PDF, attempting OCR...")
+        df = extract_df_from_scanned_pdf(pdf_path)
+        logger.info(f"[DEBUG] OCR DataFrame shape: {df.shape}, columns: {df.columns.tolist()}")
+    return df
 
 # --------------- Categorization ---------------
 def simple_categorize(df):
@@ -393,12 +425,10 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
         else:
             raise ValueError("Unsupported file type; supported: pdf, csv, xlsx, txt")
 
-        # Ensure required columns
-        required_columns = ["Date", "Description", "Debit", "Credit", "Balance"]
-        for col in required_columns:
-            if col not in df.columns:
-                df[col] = "" if col == "Description" else 0.0
-        df = df[required_columns]
+        # Process Date column
+        if "Date" in df.columns:
+            df["Date"] = pd.to_datetime(df["Date"], errors='coerce').fillna(pd.Timestamp("2025-01-01")).dt.strftime('%Y-%m-%d')
+            df = df.dropna(subset=["Date"]).reset_index(drop=True)
 
         # Export raw CSV
         raw_csv_path = raw_dir / f"{input_path.stem}_raw.csv"
@@ -407,11 +437,12 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
 
         # Standardize and ensure required columns
         df = standardize_columns(df)
-        df["Date"] = pd.to_datetime(df["Date"], errors="coerce").fillna(pd.Timestamp("2025-01-01"))
-        df = df.dropna(subset=["Date"]).reset_index(drop=True)
-        if df.empty:
-            logger.warning(f"Empty DataFrame after preprocessing {input_path}")
-            raise ValueError("No valid transactions extracted")
+        for col in ["Debit", "Credit", "Balance"]:
+            if col not in df.columns:
+                df[col] = 0.0
+        if "Date" not in df.columns:
+            print("No Date column found after parsing. Exiting.")
+            return None
 
         df = make_arrow_compatible(df)
 
