@@ -60,10 +60,20 @@ def ensure_dir(path):
 def setup_playwright():
     try:
         with sync_playwright() as p:
-            p.chromium.launch()  # Installs Chromium if not already present
+            browser = p.chromium.launch()
+            browser.close()
         logger.info("Playwright Chromium initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize Playwright: {e}")
+        logger.info("Attempting to install Playwright browsers...")
+        try:
+            os.system("playwright install chromium")
+            with sync_playwright() as p:
+                browser = p.chromium.launch()
+                browser.close()
+            logger.info("Playwright Chromium installed and initialized successfully")
+        except Exception as e2:
+            logger.error(f"Failed to install and initialize Playwright: {e2}")
 
 def standardize_columns(df):
     mapping = {
@@ -621,9 +631,11 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
                     ml_result = ml_result_temp
                 else:
                     logger.error(f"model_predict_and_explain returned invalid result: {ml_result_temp}")
+                    ml_result = {"model_prediction": "N/A", "model_probability": 0.0}
             except Exception as e:
                 print(f"[ERROR] ML model prediction failed: {e}")
                 logger.error(f"ML model prediction failed: {e}")
+                ml_result = {"model_prediction": "N/A", "model_probability": 0.0}
         else:
             logger.warning(f"No ML model found at {model_path}")
         print(f"[DEBUG] ML result: {ml_result}")
@@ -681,11 +693,11 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             try:
                 fig = func(cibil_score) if 'cibil' in filename else func(categorized_df)
                 if fig:
-                    if 'st' in globals():  # Running in Streamlit
+                    if 'st' in globals() and st.runtime.exists():  # Running in Streamlit
                         st.plotly_chart(fig, use_container_width=True)
                     output_path = str(plots_dir / filename)
-                    # Use Playwright as the engine
-                    fig.write_image(output_path, engine="playwright", width=1200, height=800)
+                    # Use Kaleido for image export
+                    fig.write_image(output_path, engine="kaleido", width=1200, height=800)
                     plot_paths.append((output_path, filename.replace(".png", "").replace("_", " ").title()))
                     print(f"Generated {filename}")
             except Exception as e:
@@ -698,22 +710,24 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
         try:
             from reportlab.pdfbase import pdfmetrics
             from reportlab.pdfbase.ttfonts import TTFont
-            # Use built-in fonts explicitly
-            pdfmetrics.registerFont(TTFont('Helvetica', 'Helvetica'))  # This may still fail, so handle gracefully
+            # Avoid registering external fonts; use built-in fonts
+            logger.info("Using ReportLab built-in fonts (Helvetica, Helvetica-Bold)")
         except Exception as e:
             logger.warning(f"Failed to register fonts, using defaults: {e}")
         
+        decision_color = '#008000' if final_action.lower() == 'approve' else '#FF0000'
+
         # Create PDF buffer
         pdf_buffer = io.BytesIO()
         doc = SimpleDocTemplate(pdf_buffer, pagesize=A4, leftMargin=40, rightMargin=40, topMargin=40, bottomMargin=40)
         styles = getSampleStyleSheet()
         
-        # Customize styles with built-in fonts
+        # Customize styles
         styles.add(ParagraphStyle(name='HeaderTitle', fontName='Helvetica', fontSize=16, leading=20, textColor=colors.HexColor('#333333'), alignment=1))
         styles.add(ParagraphStyle(name='HeaderText', fontName='Helvetica', fontSize=10, leading=12, textColor=colors.HexColor('#333333'), alignment=1))
         styles.add(ParagraphStyle(name='SectionHeading', fontName='Helvetica', fontSize=12, leading=14, textColor=colors.HexColor('#555555'), spaceAfter=5))
         styles.add(ParagraphStyle(name='DecisionText', fontName='Helvetica', fontSize=10, leading=12, textColor=colors.HexColor(decision_color)))
-
+        
         # Create readable filename
         name = applicant_data.get('name', input_path.stem)
         # Remove temp file prefixes like 'tmp' and random characters, keep meaningful parts
