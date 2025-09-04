@@ -17,6 +17,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
+from playwright.sync_api import sync_playwright
 
 # Try to import project utils; if not available, fallback to simple helpers
 from utils.text_parser import parse_bank_statement_text
@@ -55,6 +56,14 @@ def ensure_dir(path):
     path = Path(path)
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+def setup_playwright():
+    try:
+        with sync_playwright() as p:
+            p.chromium.launch()  # Installs Chromium if not already present
+        logger.info("Playwright Chromium initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize Playwright: {e}")
 
 def standardize_columns(df):
     mapping = {
@@ -366,6 +375,8 @@ def export_raw_csv(df, out_csv):
 
 # --------------- Main pipeline ---------------
 def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_dir="outputs", applicant_data=None):
+    logger.info(f"Starting analyze_file with input_path={input_path}, cibil_score={cibil_score}, applicant_data={applicant_data}")
+    setup_playwright()  # Initialize Playwright
     # Initialize default output dictionary
     out = {
         "raw_csv": None,
@@ -594,13 +605,17 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             heuristic_decision = {"Action": "Review", "Reason": f"Error in decision logic: {e}"}
         print("Heuristic decision:", heuristic_decision)
 
-        # 5) ML model prediction
+        # In the ML model prediction section (Step 5)
         print("[5/8] ML model integration (if model exists)...")
         model_path = Path("models/loan_approval_model.pkl")
+        logger.info(f"Checking for ML model at: {model_path.absolute()}")
+        if not model_path.exists():
+            logger.warning(f"ML model file not found at {model_path}")
         model = load_model(model_path) if 'load_model' in globals() else None
-        ml_result = None
+        ml_result = {"model_prediction": "N/A", "model_probability": 0.0}  # Default value
         if model is not None:
             try:
+                logger.info("ML model loaded successfully")
                 ml_result_temp = model_predict_and_explain(model, metrics_df) if 'model_predict_and_explain' in globals() else None
                 if isinstance(ml_result_temp, dict):
                     ml_result = ml_result_temp
@@ -609,7 +624,6 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             except Exception as e:
                 print(f"[ERROR] ML model prediction failed: {e}")
                 logger.error(f"ML model prediction failed: {e}")
-                ml_result = None
         else:
             logger.warning(f"No ML model found at {model_path}")
         print(f"[DEBUG] ML result: {ml_result}")
@@ -620,14 +634,15 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             logger.error(f"heuristic_decision is not a dict: {heuristic_decision}")
             heuristic_decision = {"Action": "Review", "Reason": "Invalid heuristic decision output"}
         final_decision = heuristic_decision
+        # In decision reconciliation
+        ml_result = ml_result or {"model_prediction": "N/A", "model_probability": 0.0}
         if isinstance(ml_result, dict) and ml_result.get("model_probability", 0) >= 70:
             final_action = ml_result.get("model_prediction", "Unknown")
             final_reason = f"ML-based decision (confidence: {ml_result.get('model_probability', 0)}%)"
         else:
             final_action = heuristic_decision.get("Action", "Unknown")
             final_reason = heuristic_decision.get("Reason", "No reason provided")
-            logger.info(f"Using heuristic decision (ML confidence {ml_result.get('model_probability', 0) if isinstance(ml_result, dict) else 0}% or model unavailable)")
-        # Display decision (Streamlit-compatible)
+            logger.info(f"Using heuristic decision (ML confidence {ml_result.get('model_probability', 0)}% or model unavailable)")        # Display decision (Streamlit-compatible)
         action = final_decision.get("Action", "Unknown")
         reason = final_decision.get("Reason", "No reason provided")
         if not isinstance(reason, str):
@@ -645,7 +660,7 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
         # 7) Visualizations
         print("[7/8] Generating visualizations...")
         categorized_df["Amount"] = categorized_df["Credit"].fillna(0.0) - categorized_df["Debit"].fillna(0.0)
-
+        
         plot_functions = [
             (plot_income_trend_plotly, "income_trend.png"),
             (plot_surplus_trend_plotly, "surplus_trend.png"),
@@ -660,20 +675,8 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             (plot_income_expense_scatter_plotly, "income_expense_scatter.png"),
             (plot_monthly_transaction_volume_by_category_plotly, "monthly_transaction_volume_by_category.png")
         ]
-
+        
         plot_paths = []
-
-        @contextmanager
-        def safe_browser():
-            """Context manager to ensure browser cleanup for Plotly rendering."""
-            try:
-                yield
-            finally:
-                try:
-                    pio.kaleido.scope.stop()
-                except Exception:
-                    pass
-
         for func, filename in plot_functions:
             try:
                 fig = func(cibil_score) if 'cibil' in filename else func(categorized_df)
@@ -681,17 +684,36 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
                     if 'st' in globals():  # Running in Streamlit
                         st.plotly_chart(fig, use_container_width=True)
                     output_path = str(plots_dir / filename)
-                    fig.write_image(output_path, engine="kaleido")
+                    # Use Playwright as the engine
+                    fig.write_image(output_path, engine="playwright", width=1200, height=800)
                     plot_paths.append((output_path, filename.replace(".png", "").replace("_", " ").title()))
                     print(f"Generated {filename}")
             except Exception as e:
                 print(f"Error generating {filename}: {e}")
                 logger.error(f"Error generating {filename}: {e}")
 
-        print(f"Saved {len(plot_paths)} plots to {plots_dir}")
-
         # 10) Generate PDF report
         print("[10/10] Building PDF report...")
+
+        try:
+            from reportlab.pdfbase import pdfmetrics
+            from reportlab.pdfbase.ttfonts import TTFont
+            # Use built-in fonts explicitly
+            pdfmetrics.registerFont(TTFont('Helvetica', 'Helvetica'))  # This may still fail, so handle gracefully
+        except Exception as e:
+            logger.warning(f"Failed to register fonts, using defaults: {e}")
+        
+        # Create PDF buffer
+        pdf_buffer = io.BytesIO()
+        doc = SimpleDocTemplate(pdf_buffer, pagesize=A4, leftMargin=40, rightMargin=40, topMargin=40, bottomMargin=40)
+        styles = getSampleStyleSheet()
+        
+        # Customize styles with built-in fonts
+        styles.add(ParagraphStyle(name='HeaderTitle', fontName='Helvetica', fontSize=16, leading=20, textColor=colors.HexColor('#333333'), alignment=1))
+        styles.add(ParagraphStyle(name='HeaderText', fontName='Helvetica', fontSize=10, leading=12, textColor=colors.HexColor('#333333'), alignment=1))
+        styles.add(ParagraphStyle(name='SectionHeading', fontName='Helvetica', fontSize=12, leading=14, textColor=colors.HexColor('#555555'), spaceAfter=5))
+        styles.add(ParagraphStyle(name='DecisionText', fontName='Helvetica', fontSize=10, leading=12, textColor=colors.HexColor(decision_color)))
+
         # Create readable filename
         name = applicant_data.get('name', input_path.stem)
         # Remove temp file prefixes like 'tmp' and random characters, keep meaningful parts

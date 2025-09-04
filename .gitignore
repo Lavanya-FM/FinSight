@@ -1,6 +1,6 @@
 .history/
 __pycache__/
-models/
+
 categorized_csvs/
 outputs/
 statements/
@@ -12,3 +12,4 @@ bank/
 .streamlit/
 official_models/
 training_log
+# .gitignore
