@@ -49,7 +49,8 @@ def initialize_session_state():
         "show_cibil_input": False,
         "show_activity": False,
         "sidebar_expanded": False,
-        "initial_load": True
+        "initial_load": True,
+        "logged_out": False
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -215,23 +216,31 @@ def test_database_connection():
 
 # Cookie manager for persistent login
 cookie_manager = stx.CookieManager()
-if not st.session_state["user_id"] and cookie_manager.get("user_id"):
+if not st.session_state.get("user_id") or not st.session_state.get("logged_out", False):
     try:
-        st.session_state["user_id"] = cookie_manager.get("user_id")
-        user_data = client.table("users").select("user_id, username, role").eq("user_id", st.session_state["user_id"]).execute()
-        if user_data.data:
-            st.session_state.update({
-                "username": user_data.data[0]["username"],
-                "role": user_data.data[0]["role"],
-                "current_tab": "home" if user_data.data[0]["role"] == "user" else "admin_reports"
-            })
+        user_id_from_cookie = cookie_manager.get("user_id")
+        if user_id_from_cookie:
+            user_data = client.table("users").select("user_id, username, role").eq("user_id", user_id_from_cookie).execute()
+            if user_data.data:
+                st.session_state.update({
+                    "user_id": user_data.data[0]["user_id"],
+                    "username": user_data.data[0]["username"],
+                    "role": user_data.data[0]["role"],
+                    "current_tab": "home" if user_data.data[0]["role"] == "user" else "admin_reports"
+                })
+                logger.info(f"User {user_data.data[0]['username']} restored from cookie")
+            else:
+                cookie_manager.delete("user_id")
+                logger.info("Invalid or expired cookie deleted")
         else:
-            cookie_manager.delete("user_id")
-            st.session_state["user_id"] = None
+            logger.info("No user_id cookie found")
     except Exception as e:
         logger.error(f"Failed to validate cookie: {str(e)}")
-        cookie_manager.delete("user_id")
-        st.session_state["user_id"] = None
+        try:
+            cookie_manager.delete("user_id")
+            logger.info("Cookie deleted due to validation error")
+        except Exception as e:
+            logger.error(f"Failed to delete cookie during validation: {str(e)}")
 
 # CAPTCHA generation
 def generate_captcha():
@@ -272,7 +281,7 @@ st.markdown("""
 # Sidebar toggle logic
 if st.button("☰", key="toggle_sidebar", help="Toggle Sidebar"):
     st.session_state["sidebar_expanded"] = not st.session_state["sidebar_expanded"]
-    # Re-run to apply JavaScript with new state
+
 
 # Check for recovery mode
 query_params = st.query_params
@@ -281,7 +290,8 @@ if 'type' in query_params and query_params['type'] == 'recovery':
     st.session_state["current_tab"] = "reset_password"
 
 # Landing page for non-logged-in users
-if not st.session_state["user_id"]:
+if not st.session_state.get("user_id") or st.session_state.get("logged_out", False):
+    logger.info("Rendering landing page")
     st.markdown('<div class="content">', unsafe_allow_html=True)
 
     # Landing page
@@ -298,12 +308,14 @@ if not st.session_state["user_id"]:
         if st.button("Log In", key="landing_login", use_container_width=True):
             st.session_state["current_tab"] = "login"
             st.session_state["login_captcha"] = generate_captcha()
+            st.session_state["logged_out"] = False
             st.rerun()
     
     with col2:
         if st.button("Get Started", key="landing_register", use_container_width=True):
             st.session_state["current_tab"] = "register"
             st.session_state["register_captcha"] = generate_captcha()
+            st.session_state["logged_out"] = False
             st.rerun()
 
     # Handle password reset and forgot password flows
@@ -385,6 +397,7 @@ if not st.session_state["user_id"]:
                                 logger.error(f"Failed to set cookie: {str(e)}")
                             st.success("Login successful!")
                             st.session_state["login_captcha"] = None
+                            st.session_state["logged_out"] = False
                             time.sleep(1)
                             st.rerun()
                         else:
@@ -439,6 +452,7 @@ if not st.session_state["user_id"]:
                             st.session_state["current_tab"] = "login"
                             st.session_state["register_captcha"] = None
                             st.session_state["login_captcha"] = generate_captcha()
+                            st.session_state["logged_out"] = False
                             time.sleep(1)
                             st.rerun()
                         except Exception as e:
@@ -492,20 +506,35 @@ else:
                 st.session_state["show_cibil_input"] = not st.session_state["show_cibil_input"]
                 st.session_state.update({"show_upload": True, "show_reports": False, "show_analytics": False, "show_profile": False, "show_activity": False})
 
-        if st.button("🚪 Logout", key="sidebar_logout", use_container_width=True,help="Sign out"):
+        if st.button("🚪 Logout", key="sidebar_logout", use_container_width=True, help="Sign out"):
             try:
                 client.auth.sign_out()
             except Exception as e:
                 logger.error(f"Failed to sign out: {str(e)}")
-            st.session_state.clear()
-            initialize_session_state()  # Re-initialize session state
+            
+            # Attempt to delete the cookie, handle potential errors gracefully
             try:
-                cookie_manager.delete("user_id")
+                if cookie_manager.get("user_id"):  # Check if the cookie exists before deletion
+                    cookie_manager.delete("user_id")
+                    logger.info("Cookie 'user_id' deleted successfully")
+                else:
+                    logger.info("No 'user_id' cookie found to delete")
             except Exception as e:
-                logger.error(f"Failed to delete cookie: {str(e)}")
+                logger.error(f"Failed to delete cookie 'user_id': {str(e)}")
+
+            # Clear session state and reinitialize
+            st.session_state.clear()
+            initialize_session_state()
+
+            # Explicitly set state to show landing page
+            st.session_state["user_id"] = None
+            st.session_state["current_tab"] = None
+            st.session_state["logged_out"] = True
+            st.session_state["initial_load"] = True
+
             st.success("Logged out successfully")
- 
-            st.rerun() # Force rerun to reload the page in non-logged-in state
+            time.sleep(0.5)  # Brief delay to show success message
+            st.rerun()  # Force rerun to reload the page in non-logged-in state
 
         if st.session_state["role"] == "admin":
             st.markdown("---")
@@ -591,7 +620,7 @@ else:
                 uploaded_files = st.file_uploader(
                     "Choose Files",
                     type=['pdf', 'csv', 'xlsx', 'txt', 'doc', 'docx'],
-                    help="Drag and drop files here • Limit 200MB per file • PDF, CSV, XLSX, TXT, DOC, DOCX",
+                    help="Upload last 6 months bank statement",
                     accept_multiple_files=True
                 )
                 if uploaded_files:
@@ -649,7 +678,6 @@ else:
                                                 file_id,
                                                 decision,
                                                 report_text,
-                                                plots_text
                                             )
 
                                             if report_id:
@@ -972,6 +1000,7 @@ else:
                 if st.button("Back to Login"):
                     st.session_state["current_tab"] = "login"
                     st.session_state["login_captcha"] = generate_captcha()
+                    st.session_state["logged_out"] = False
                     st.rerun()
 
                 st.markdown('</div>', unsafe_allow_html=True)
