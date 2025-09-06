@@ -8,16 +8,13 @@ import logging
 import time
 import json
 import re
-import io
 import random
 from datetime import datetime, timedelta, timezone
 import extra_streamlit_components as stx
 from typing import Optional
 from services.base import client, admin_client
 from supabase import create_client
-import pandas as pd
 import hashlib
-import base64
 from visualizer import analyze_file
 
 os.environ["STREAMLIT_SERVER_FILE_WATCHER_TYPE"] = "none"
@@ -161,7 +158,7 @@ def save_file_metadata(user_id, filename, storage_path, file_size, file_type, fi
         logging.error(f"❌ Metadata insert failed for {filename}: {str(e)}")
         return None
 
-def save_report_with_text(user_id: str, file_id: int, decision: dict, report_text: str, plots_text: str) -> Optional[int]:
+def save_report_with_text(user_id: str, file_id: int, decision: dict, report_text: str) -> Optional[int]:
     """
     Saves report metadata to the database without storing files.
     Returns the report_id if successful, None otherwise.
@@ -495,20 +492,6 @@ else:
                 st.session_state["show_cibil_input"] = not st.session_state["show_cibil_input"]
                 st.session_state.update({"show_upload": True, "show_reports": False, "show_analytics": False, "show_profile": False, "show_activity": False})
 
-        if st.session_state["role"] == "admin":
-            st.markdown("---")
-            st.markdown("### Admin Tools")
-            if st.button("📋 System Reports"):
-                st.session_state.update({"current_tab": "admin_reports"})
-                st.rerun()
-            if st.button("👥 User Management"):
-                st.session_state.update({"current_tab": "admin_users"})
-                st.rerun()
-            if st.button("⚙️ System Settings"):
-                st.session_state.update({"current_tab": "admin_settings"})
-
-        st.markdown("---")
-
         if st.button("🚪 Logout", key="sidebar_logout", use_container_width=True,help="Sign out"):
             try:
                 client.auth.sign_out()
@@ -523,6 +506,18 @@ else:
             st.success("Logged out successfully")
  
             st.rerun() # Force rerun to reload the page in non-logged-in state
+
+        if st.session_state["role"] == "admin":
+            st.markdown("---")
+            st.markdown("### Admin Tools")
+            if st.button("📋 System Reports"):
+                st.session_state.update({"current_tab": "admin_reports"})
+                st.rerun()
+            if st.button("👥 User Management"):
+                st.session_state.update({"current_tab": "admin_users"})
+                st.rerun()
+            if st.button("⚙️ System Settings"):
+                st.session_state.update({"current_tab": "admin_settings"})
             
     # Main content area
     st.markdown('<div class="content">', unsafe_allow_html=True)
@@ -545,6 +540,13 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
+        st.markdown(f'''
+                <div class="welcome-section">
+                    <h2 class="welcome-title">Welcome, {st.session_state["username"]}</h2>
+                    <p class="welcome-subtitle">Manage your documents and unlock premium features via the sidebar</p>
+                </div>
+                ''', unsafe_allow_html=True)
+
         if st.session_state["role"] == "user" and st.session_state["show_cibil_input"]:
             st.markdown('<div class="cibil-section">', unsafe_allow_html=True)
             st.markdown("### Enter CIBIL Score")
@@ -559,13 +561,6 @@ else:
                     logger.error(f"Failed to save CIBIL score to session state for user_id={st.session_state['user_id']}: {str(e)}")
                     st.error(f"❌ Failed to save CIBIL score: {str(e)}")
             st.markdown('</div>', unsafe_allow_html=True)
-
-        st.markdown(f'''
-        <div class="welcome-section">
-            <h2 class="welcome-title">Welcome, {st.session_state["username"]}</h2>
-            <p class="welcome-subtitle">Manage your documents and unlock premium features via the sidebar</p>
-        </div>
-        ''', unsafe_allow_html=True)
 
         if st.session_state["show_profile"]:
             st.markdown("### Profile")
