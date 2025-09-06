@@ -16,7 +16,8 @@ from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
-
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from playwright.sync_api import sync_playwright
 
 # Try to import project utils; if not available, fallback to simple helpers
@@ -41,40 +42,70 @@ from utils.plotting import (
     plot_monthly_transaction_volume_by_category_plotly
     )
 
-import logging
-# Ensure Plotly browser cleanup
-import plotly.io as pio
-from contextlib import contextmanager
-
 # Setup logging
 logging.basicConfig(level=logging.INFO, filename='app.log', filemode='a',
                     format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Helpers
+def safe_str(value, default="Unknown"):
+    if value is None:
+        return default
+    try:
+        # Replace curly braces to prevent formatting errors
+        return str(value).replace('{', '{{').replace('}', '}}').strip()
+    except Exception as e:
+        logger.warning(f"Invalid string value: {value}, error: {e}, using default {default}")
+        return default
+    
+def safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        logger.warning(f"Invalid float value: {value}, using default {default}")
+        return default
+
+def safe_int(value, default=0):
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        logger.warning(f"Invalid int value: {value}, using default {default}")
+        return default
+
 def ensure_dir(path):
     path = Path(path)
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 def setup_playwright():
+    import platform
+    if 'linux' in platform.system().lower() and 'microsoft' in platform.release().lower():
+        logger.info("Detected WSL environment; skipping Playwright setup")
+        return False
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch()
+            browser = p.chromium.launch(headless=True)
             browser.close()
         logger.info("Playwright Chromium initialized successfully")
+        return True
+    except NotImplementedError as e:
+        logger.info(f"Playwright not supported in this environment (likely WSL): {e}")
+        return False
     except Exception as e:
         logger.error(f"Failed to initialize Playwright: {e}")
         logger.info("Attempting to install Playwright browsers...")
         try:
-            os.system("playwright install chromium")
+            import subprocess
+            subprocess.run(["playwright", "install", "chromium"], check=True)
             with sync_playwright() as p:
-                browser = p.chromium.launch()
+                browser = p.chromium.launch(headless=True)
                 browser.close()
             logger.info("Playwright Chromium installed and initialized successfully")
+            return True
         except Exception as e2:
             logger.error(f"Failed to install and initialize Playwright: {e2}")
-
+            return False
+        
 def standardize_columns(df):
     mapping = {
         'debit': 'Debit', 'withdrawal': 'Debit', 'dr': 'Debit',
@@ -165,6 +196,27 @@ def enforce_metrics_schema(df):
         df['MonthStart'] = df['MonthStart'].astype(str)
     return df
 
+# FIX: Enhanced function to extract applicant name from PDF text
+def extract_applicant_name_from_text(text):
+    patterns = [
+        r'Name\s*[:=]\s*([A-Z][a-zA-Z\s]+?)(?=\s*\n|\s*Account|\s*$)',
+        r'Account Holder\s*[:=]\s*([A-Z][a-zA-Z\s]+?)(?=\s*\n|\s*Account|\s*$)',
+        r'Customer Name\s*[:=]\s*([A-Z][a-zA-Z\s]+?)(?=\s*\n|\s*Account|\s*$)',
+        r'Statement for\s*([A-Z][a-zA-Z\s]+?)(?=\s*\n|\s*Account|\s*$)',
+        r'Account of\s*([A-Z][a-zA-Z\s]+?)(?=\s*\n|\s*Account|\s*$)',  # Added for broader coverage
+        r'Holder\s*[:=]\s*([A-Z][a-zA-Z\s]+?)(?=\s*\n|\s*Account|\s*$)',  # Shortened variation
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
+        if match:
+            name = match.group(1).strip()
+            logger.info(f"Extracted applicant name: {name}")
+            # Sanitize name for filename (replace spaces with underscores, remove invalid chars)
+            sanitized_name = re.sub(r'[^\w\s]', '', name).replace(' ', '_')
+            return sanitized_name
+    logger.warning(f"No name pattern matched in text: {text[:200]}...")  # Log first 200 chars for debugging
+    return "unknown_applicant"
+
 # --------------- Improved fallback parser ---------------
 def basic_parse_text_to_df(text):
     lines = [l.rstrip() for l in text.splitlines() if l.strip()]
@@ -237,16 +289,22 @@ def parse_pdf_to_df(pdf_path):
     text = ""
     try:
         with fitz.open(pdf_path) as doc:
-            for page in doc:
-                text += page.get_text("text") + "\n"
+            for page_num, page in enumerate(doc):
+                page_text = page.get_text("text")
+                text += page_text + "\n"
+                if page_num >= 1:
+                    break
     except FileNotFoundError as e:
-        print(f"PDF file not found: {e}")
-        # Proceed with empty text for fallback
+        logger.error(f"PDF file not found: {e}")
+        text = ""
     except Exception as e:
-        print(f"Unexpected error opening PDF: {e}")
-        # Proceed with empty text for fallback
+        logger.error(f"Unexpected error opening PDF: {e}")
+        text = ""
 
-    if parse_bank_statement_text:
+    applicant_name = extract_applicant_name_from_text(text)
+    logger.info(f"Parsed PDF, extracted name: {applicant_name}")
+
+    if text.strip():
         try:
             df = parse_bank_statement_text(text)
             df = standardize_columns(df)
@@ -254,28 +312,32 @@ def parse_pdf_to_df(pdf_path):
                 df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
                 df["Date"] = df["Date"].fillna(pd.Timestamp("2025-01-01"))
             else:
-                print("Warning: No 'Date' column after advanced parsing. Returning empty DataFrame.")
-                return pd.DataFrame(columns=["Date", "Description", "Debit", "Credit", "Balance"])
-            return df
-        except Exception:
-            pass
-    df = basic_parse_text_to_df(text)
-    df = standardize_columns(df)
-    if 'Date' in df.columns:
-        df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
-        df["Date"] = df["Date"].fillna(pd.Timestamp("2025-01-01"))
-    else:
-        print("Warning: No 'Date' column after basic parsing. Returning empty DataFrame.")
-        return pd.DataFrame(columns=["Date", "Description", "Debit", "Credit", "Balance"])
-    if text.strip():
-        df = parse_bank_statement_text(text)
-        logger.info(f"[DEBUG] Parsed DataFrame from text, shape: {df.shape}, columns: {df.columns.tolist()}")
+                logger.warning("No 'Date' column after advanced parsing. Returning empty DataFrame.")
+                return pd.DataFrame(columns=["Date", "Description", "Debit", "Credit", "Balance"]), applicant_name
+            logger.info(f"[DEBUG] Parsed DataFrame from text, shape: {df.shape}, columns: {df.columns.tolist()}")
+            return df, applicant_name
+        except Exception as e:
+            logger.warning(f"Advanced parsing failed: {e}, falling back to basic parsing")
+            df = basic_parse_text_to_df(text)
+            df = standardize_columns(df)
+            if 'Date' in df.columns:
+                df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
+                df["Date"] = df["Date"].fillna(pd.Timestamp("2025-01-01"))
+            else:
+                logger.warning("No 'Date' column after basic parsing. Returning empty DataFrame.")
+                return pd.DataFrame(columns=["Date", "Description", "Debit", "Credit", "Balance"]), applicant_name
+            return df, applicant_name
     else:
         logger.warning("[DEBUG] No text extracted from PDF, attempting OCR...")
-        df = extract_df_from_scanned_pdf(pdf_path)
-        logger.info(f"[DEBUG] OCR DataFrame shape: {df.shape}, columns: {df.columns.tolist()}")
-    return df
-
+        if setup_playwright():
+            df = extract_df_from_scanned_pdf(pdf_path)
+            df = standardize_columns(df)
+            logger.info(f"[DEBUG] OCR DataFrame shape: {df.shape}, columns: {df.columns.tolist()}")
+        else:
+            logger.warning("Playwright unavailable, skipping OCR.")
+            df = pd.DataFrame(columns=["Date", "Description", "Debit", "Credit", "Balance"])
+        return df, applicant_name
+    
 # --------------- Categorization ---------------
 def simple_categorize(df):
     df = df.copy()
@@ -361,16 +423,17 @@ def model_predict_and_explain(model, metrics_df):
         # Make prediction
         prediction = model.predict([features])[0]
         prob = model.predict_proba([features])[0] if hasattr(model, "predict_proba") else [0.5, 0.5]
+        max_prob = max(prob)
         ml_result = {
             "model_prediction": "APPROVED" if prediction == 1 else "REJECTED",
-            "model_probability": round(max(prob) * 100, 2),
+            "model_probability": round(max_prob * 100, 2),
             "features_used": dict(zip(expected_features, features))
         }
-        print(f"[DEBUG] ML model output: {ml_result}")
+        logger.info(f"[DEBUG] ML model output: {ml_result}")
         return ml_result
     except Exception as e:
-        print(f"[ERROR] ML model prediction failed: {e}")
-        return None
+        logger.error(f"[ERROR] ML model prediction failed: {e}")
+        return {"model_prediction": "N/A", "model_probability": 0.0}
 
 # --------------- CSV export ---------------
 def export_raw_csv(df, out_csv):
@@ -383,26 +446,44 @@ def export_raw_csv(df, out_csv):
     df.to_csv(out_csv, index=False, date_format='%Y-%m-%d')
     return out_csv
 
+def safe_str(s):
+    if s is None:
+        return ""
+    return str(s).replace('<', '&lt;').replace('>', '&gt;')
+
 # --------------- Main pipeline ---------------
-def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_dir="outputs", applicant_data=None):
-    logger.info(f"Starting analyze_file with input_path={input_path}, cibil_score={cibil_score}, applicant_data={applicant_data}")
+def analyze_file(file_path: str, cibil_score: int = None, fill_method: str = "interpolate", out_dir: str = "outputs", applicant_data: dict = None, original_filename: str = None):
+    logger.info(f"Starting analyze_file with file_path={file_path}, cibil_score={cibil_score}, applicant_data={applicant_data}")
+    
+    # FIX: Convert file_path to Path object
+    file_path = Path(file_path)
+    logger.info(f"[DEBUG] file_path type: {type(file_path)}, value: {file_path}")
+
     setup_playwright()  # Initialize Playwright
+    logger.info("Skipping font registration; using built-in Helvetica")
+
     # Initialize default output dictionary
     out = {
         "raw_csv": None,
         "categorized_csv": None,
         "metrics_csv": None,
         "plots": [],
-        "html_path": None,
-        "pdf_path": None, # Changed to pdf_report for PDF-only output
+        "pdf_path": None,
         "decision_json": None,
         "metrics_df": pd.DataFrame(),
         "transactions_df": pd.DataFrame(),
-        "report_text": None
+        "heuristic_decision": {},
+        "ml_result": {},
+        "final_action": "Reject",
+        "final_reason": "Analysis incomplete",
+        "report_text": "",
+        "applicant_name": "unknown_applicant"  # FIX: Added to return extracted name
     }
+    print(f" Starting analysis for {file_path}...")
+    print(f"[DEBUG] Input parameters: cibil_score={cibil_score}, fill_method={fill_method}, out_dir={out_dir}, applicant_data={applicant_data}, original_filename={original_filename}")
+
     try:
-        input_path = Path(input_path)
-        out_dir = ensure_dir(out_dir)
+        out_dir = Path(out_dir)
         plots_dir = ensure_dir(out_dir / "plots")
         metrics_dir = ensure_dir(out_dir / "metrics")
         raw_dir = ensure_dir(out_dir / "raw_transactions")
@@ -410,35 +491,37 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
         decisions_dir = ensure_dir(out_dir / "loan_decisions")
         reports_dir = ensure_dir(out_dir / "reports")
 
-        # Validate or default CIBIL score
-        if cibil_score is not None and (not isinstance(cibil_score, (int, float)) or cibil_score < 300 or cibil_score > 900):
-            raise ValueError("CIBIL score must be a number between 300 and 900")
-        cibil_score = cibil_score if cibil_score is not None else 700  # Default for testing
-
-        # Ensure applicant_data is a dictionary with defaults
-        if applicant_data is None:
-            applicant_data = {"name": Path(input_path).stem, "account_number": "Unknown"}
-        else:
-            applicant_data = {
-                "name": applicant_data.get("name", Path(input_path).stem),
-                "account_number": applicant_data.get("account_number", "Unknown")
-            }
-
         # 1) Extract
-        print("[1/8] Extracting transactions...")
-        df = None
-        if input_path.suffix.lower() == ".pdf":
+        print("[1/8] Extracting transactions...") 
+        df, applicant_name = parse_pdf_to_df(file_path) # FIX: Pass Path object to parse_pdf_to_df
+        out["applicant_name"] = applicant_name  # FIX: Store extracted name
+        logger.info(f"Applicant name from PDF: {applicant_name}")
+
+        # FIX: Fallback to original filename prefix if name extraction fails
+        if applicant_name == "unknown_applicant" and original_filename:
+            filename_base = os.path.splitext(original_filename)[0]
+            if '_high' in filename_base.lower():
+                filename_base = filename_base.split('_high')[0]
+            applicant_name = filename_base
+            out["applicant_name"] = applicant_name
+            logger.info(f"Fell back to filename-derived name: {applicant_name}")
+
+        account_number = applicant_data.get("account_number", "N/A") if applicant_data else "N/A"
+
+        # FIX: Use file_path which is now a Path object
+        if file_path.suffix.lower() == ".pdf":
             try:
-                df = parse_pdf_to_df(str(input_path))
+                df, applicant_name = parse_pdf_to_df(file_path)  # Already a Path object
+                out["applicant_name"] = applicant_name
             except Exception as e:
                 print("PDF parse error:", e)
                 df = pd.DataFrame()
-        elif input_path.suffix.lower() in [".csv", ".txt", ".xls", ".xlsx"]:
+        elif file_path.suffix.lower() in [".csv", ".txt", ".xls", ".xlsx"]:
             try:
-                if input_path.suffix.lower() in [".xls", ".xlsx"]:
-                    df = pd.read_excel(str(input_path))
+                if file_path.suffix.lower() in [".xls", ".xlsx"]:
+                    df = pd.read_excel(file_path)
                 else:
-                    df = pd.read_csv(str(input_path))
+                    df = pd.read_csv(file_path)
                 df = standardize_columns(df)
             except Exception as e:
                 print("File load error:", e)
@@ -452,7 +535,7 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             df = df.dropna(subset=["Date"]).reset_index(drop=True)
 
         # Export raw CSV
-        raw_csv_path = raw_dir / f"{input_path.stem}_raw.csv"
+        raw_csv_path = raw_dir / f"{applicant_name}_raw.csv"
         export_raw_csv(df, raw_csv_path)
         print(f"Exported raw CSV: {raw_csv_path}")
 
@@ -469,9 +552,9 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
 
         # 2) Categorize transactions
         print("[2/8] Categorizing transactions...")
-        categorized_csv_path = categorized_dir / f"{input_path.stem}_categorized.csv"
+        categorized_csv_path = categorized_dir / f"{applicant_name}_categorized.csv"
         categorized_df = None
-
+        
         try:
             # Initialize TransactionCategorizer early
             vectorizer_path = Path("models/vectorizer.pkl")
@@ -513,7 +596,7 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
 
         # 3) Metrics
         print("[3/8] Calculating metrics...")
-        metrics_file = metrics_dir / f"{input_path.stem}_metrics.csv"
+        metrics_file = metrics_dir / f"{applicant_name}_metrics.csv"
         try:
             out_metrics = calculate_metrics(categorized_df, str(metrics_file))
             if isinstance(out_metrics, pd.DataFrame):
@@ -585,11 +668,11 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
         print(f"Saved metrics: {metrics_file}")
         logger.info(f"[DEBUG] Metrics DataFrame shape: {metrics_df.shape}, columns: {metrics_df.columns.tolist()}")
 
-        print("[5/9] Identifying high-value transactions...")
+        print("Identifying high-value transactions...")
         categorized_df["High_Value"] = high_value_mask
         logger.info(f"[DEBUG] High-value transactions count: {high_value_mask.sum()}")
 
-        print("[6/9] Identifying recurring transactions...")
+        print("Identifying recurring transactions...")
         categorized_df["Recurring"] = recurring_mask
         logger.info(f"[DEBUG] Recurring transactions count: {recurring_mask.sum()}")
 
@@ -646,28 +729,21 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             logger.error(f"heuristic_decision is not a dict: {heuristic_decision}")
             heuristic_decision = {"Action": "Review", "Reason": "Invalid heuristic decision output"}
         final_decision = heuristic_decision
-        # In decision reconciliation
         ml_result = ml_result or {"model_prediction": "N/A", "model_probability": 0.0}
         if isinstance(ml_result, dict) and ml_result.get("model_probability", 0) >= 70:
             final_action = ml_result.get("model_prediction", "Unknown")
             final_reason = f"ML-based decision (confidence: {ml_result.get('model_probability', 0)}%)"
+            logger.info(f"Overriding heuristic with ML (confidence: {ml_result.get('model_probability', 0)}%)")
         else:
             final_action = heuristic_decision.get("Action", "Unknown")
             final_reason = heuristic_decision.get("Reason", "No reason provided")
-            logger.info(f"Using heuristic decision (ML confidence {ml_result.get('model_probability', 0)}% or model unavailable)")        # Display decision (Streamlit-compatible)
-        action = final_decision.get("Action", "Unknown")
-        reason = final_decision.get("Reason", "No reason provided")
-        if not isinstance(reason, str):
-            reason = str(reason)  # Convert to string to avoid unpack errors
-        print(f"Final Decision: {action}, Reason: {reason}")
-
-        if 'st' in globals():  # Check if running in Streamlit
-            st.subheader("📋 Final Decision")
-            if action.lower() == "approve":
-                st.success(f"✅ {action} ({reason})")
-            else:
-                st.error(f"❌ {action} ({reason})")
-            print(f"Final Decision: {action}, Reason: {reason}")
+            logger.info(f"Using heuristic decision (ML confidence {ml_result.get('model_probability', 0)}% or model unavailable)")
+        # Ensure final_action and final_reason are strings
+        final_action = str(final_action)
+        final_reason = str(final_reason)
+        print(f"Final Decision: {final_action}, Reason: {final_reason}")
+        out["final_action"] = final_action
+        out["final_reason"] = final_reason
 
         # 7) Visualizations
         print("[7/8] Generating visualizations...")
@@ -704,38 +780,80 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
                 print(f"Error generating {filename}: {e}")
                 logger.error(f"Error generating {filename}: {e}")
 
-        # 10) Generate PDF report
-        print("[10/10] Building PDF report...")
-
-        try:
-            from reportlab.pdfbase import pdfmetrics
-            from reportlab.pdfbase.ttfonts import TTFont
-            # Avoid registering external fonts; use built-in fonts
-            logger.info("Using ReportLab built-in fonts (Helvetica, Helvetica-Bold)")
-        except Exception as e:
-            logger.warning(f"Failed to register fonts, using defaults: {e}")
-        
+        # 8) Generate PDF report
+        print("[8/8] Building PDF report...")
         decision_color = '#008000' if final_action.lower() == 'approve' else '#FF0000'
 
         # Create PDF buffer
         pdf_buffer = io.BytesIO()
-        doc = SimpleDocTemplate(pdf_buffer, pagesize=A4, leftMargin=40, rightMargin=40, topMargin=40, bottomMargin=40)
+        doc = SimpleDocTemplate(pdf_buffer, pagesize=A4, leftMargin=40, rightMargin=40, topMargin=40, bottomMargin=40)     
+
+        # Initialize stylesheet
+        from reportlab.lib.styles import getSampleStyleSheet
         styles = getSampleStyleSheet()
-        
-        # Customize styles
-        styles.add(ParagraphStyle(name='HeaderTitle', fontName='Helvetica', fontSize=16, leading=20, textColor=colors.HexColor('#333333'), alignment=1))
-        styles.add(ParagraphStyle(name='HeaderText', fontName='Helvetica', fontSize=10, leading=12, textColor=colors.HexColor('#333333'), alignment=1))
-        styles.add(ParagraphStyle(name='SectionHeading', fontName='Helvetica', fontSize=12, leading=14, textColor=colors.HexColor('#555555'), spaceAfter=5))
-        styles.add(ParagraphStyle(name='DecisionText', fontName='Helvetica', fontSize=10, leading=12, textColor=colors.HexColor(decision_color)))
-        
+        logger.debug(f"Initial stylesheet styles: {list(styles.byName.keys())}")
+
+        # Add custom styles, ensuring they are defined correctly
+        try:
+            styles.add(ParagraphStyle(
+                name='HeaderTitle',
+                parent=styles['Heading1'],
+                fontName='Helvetica-Bold',
+                fontSize=16,
+                leading=20,
+                textColor=colors.HexColor('#333333'),
+                alignment=1  # Center
+            ))
+            styles.add(ParagraphStyle(
+                name='HeaderText',
+                parent=styles['Normal'],
+                fontName='Helvetica',
+                fontSize=10,
+                leading=12,
+                textColor=colors.HexColor('#333333'),
+                alignment=1  # Center
+            ))
+            styles.add(ParagraphStyle(
+                name='SectionHeading',
+                parent=styles['Heading2'],
+                fontName='Helvetica-Bold',
+                fontSize=12,
+                leading=14,
+                textColor=colors.HexColor('#555555'),
+                spaceAfter=5
+            ))
+            styles.add(ParagraphStyle(
+                name='DecisionText',
+                parent=styles['Normal'],
+                fontName='Helvetica-Bold',
+                fontSize=10,
+                leading=12,
+                textColor=colors.HexColor(decision_color)
+            ))
+            logger.info("Custom styles added successfully")
+        except Exception as e:
+            logger.error(f"Failed to add custom styles to stylesheet: {e}")
+            # Fallback to default styles if custom styles fail
+            styles['HeaderTitle'] = styles['Heading1']
+            styles['HeaderText'] = styles['Normal']
+            styles['SectionHeading'] = styles['Heading2']
+            styles['DecisionText'] = styles['Normal']
+        # Debug: Log styles after adding custom styles
+        logger.debug(f"Styles after adding custom styles: {list(styles.byName.keys())}")
+
         # Create readable filename
-        name = applicant_data.get('name', input_path.stem)
+        name = applicant_data.get('name', applicant_name) if isinstance(applicant_data, dict) else applicant_name
         # Remove temp file prefixes like 'tmp' and random characters, keep meaningful parts
         if name.startswith('tmp') and '_' in name:
             name = name.split('_', 1)[-1]  # Extract meaningful part after 'tmpXXXX_'
         sanitized_name = re.sub(r'[^\w\s-]', '', name).replace('\n', ' ').replace(' ', '_').strip()
         pdf_path = reports_dir / f"{sanitized_name}_{cibil_score}_report.pdf"
         html_path = reports_dir / f"{sanitized_name}_{cibil_score}_report.html"
+
+        # Update applicant_name and account_number for template
+        applicant_name = safe_str(applicant_data.get('name', applicant_name) if isinstance(applicant_data, dict) else applicant_name)
+        account_number = safe_str(applicant_data.get('account_number', 'N/A') if isinstance(applicant_data, dict) else 'N/A')
+
         # HTML template with escaped curly braces in CSS
         premium_template = """<!DOCTYPE html>
         <html>
@@ -850,28 +968,7 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
             </div>
         </body>
         </html>"""
-        # Helper functions to sanitize inputs
-        def safe_float(value, default=0.0):
-            try:
-                return float(value)
-            except (ValueError, TypeError):
-                logger.warning(f"Invalid float value: {value}, using default {default}")
-                return default
-        def safe_int(value, default=0):
-            try:
-                return int(value)
-            except (ValueError, TypeError):
-                logger.warning(f"Invalid int value: {value}, using default {default}")
-                return default
-        def safe_str(value, default="Unknown"):
-            if value is None:
-                return default
-            try:
-                # Replace curly braces to prevent formatting errors
-                return str(value).replace('{', '{{').replace('}', '}}').strip()
-            except Exception as e:
-                logger.warning(f"Invalid string value: {value}, error: {e}, using default {default}")
-                return default
+        
         # Prepare data for template with validation
         avg_monthly_income = safe_float(metrics_df['Average Monthly Income'].iloc[0] if not metrics_df.empty else 0.0)
         avg_monthly_expenses = safe_float(metrics_df['Average Monthly Expenses'].iloc[0] if not metrics_df.empty else 0.0)
@@ -897,14 +994,14 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
         ml_probability = safe_float(ml_result.get('model_probability', 0) if ml_result else 0)
         final_action = safe_str(heuristic_decision.get('Action', 'Unknown'))
         final_reason = safe_str(heuristic_decision.get('Reason', 'No reason provided'))
-        applicant_name = safe_str(applicant_data.get('name', 'Unknown'))
-        account_number = safe_str(applicant_data.get('account_number', 'Unknown'))
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         decision_color = safe_str('#008000' if final_action.lower() == 'approve' else '#FF0000')
+
         # Debug variable values
         logger.debug(f"Template variables: applicant_name={applicant_name}, account_number={account_number}, "
                      f"cibil_score={cibil_score}, final_action={final_action}, final_reason={final_reason}, "
                      f"decision_color={decision_color}")
+        
         # Embed plots as base64 images for HTML
         plots_html = ''
         for plot_path, title in plot_paths:
@@ -963,197 +1060,199 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
         except Exception as e:
             logger.error(f"Failed to save HTML: {e}")
             out["html_path"] = None
+        
+        # Debug: Log styles before building PDF
+        logger.debug(f"Styles before PDF build: {list(styles.byName.keys())}")
+
         # Generate PDF using ReportLab
+        story = []
+
+        #Header Section
+        header_table = Table([[Paragraph("Loan Eligibility Report", styles.get('HeaderTitle', styles['Heading1']))], 
+                              [Paragraph(f"Generated on: {timestamp}", styles.get('HeaderText', styles['Normal']))]], 
+                             colWidths=[A4[0] - 80])      
+        header_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F0F0F0')),
+            ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#CCCCCC')),
+            ('ROUNDED', (0, 0), (-1, -1), 8),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('PADDING', (0, 0), (-1, 0), 10),
+            ('PADDING', (0, 1), (-1, 1), 5),
+        ]))
+        story.append(header_table)
+        story.append(Spacer(1, 30))
+
+        # Table Style for all sections
+        table_style = TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#E0E0E0')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F9F9F9')),
+            ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 1), (-1, -1), 10),
+            ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#DDDDDD')),
+            ('LEFTPADDING', (0, 0), (-1, -1), 12),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+            ('TOPPADDING', (0, 0), (-1, -1), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+            ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#DDDDDD')),
+        ])
+
+        # Applicant Data
+        story.append(Paragraph("Applicant Data", styles.get('SectionHeading', styles['Heading2'])))
+        data = [
+            ["Name", applicant_name],
+            ["Account Number", account_number],
+            ["CIBIL Score", str(cibil_score)]
+        ]
+        table = Table(data, colWidths=[200, A4[0] - 280])
+        table.setStyle(table_style)
+        story.append(table)
+        story.append(Spacer(1, 30))
+
+        # Income & Stability
+        story.append(Paragraph("Income & Stability", styles.get('SectionHeading', styles['Heading2'])))
+        data = [
+            ["Average Monthly Income", f"₹{avg_monthly_income:,.2f}"],
+            ["Income Variability Index", f"{income_variability_index:.2f}"],
+            ["Number of Income Sources", str(num_income_sources)],
+            ["Recent Salary Trend", f"{recent_salary_trend:.2f}%"]
+        ]
+        table = Table(data, colWidths=[200, A4[0] - 280])
+        table.setStyle(table_style)
+        story.append(table)
+        story.append(Spacer(1, 30))
+
+        # Expenses & Lifestyle
+        story.append(Paragraph("Expenses & Lifestyle", styles.get('SectionHeading', styles['Heading2'])))
+        data = [
+            ["Average Monthly Expenses", f"₹{avg_monthly_expenses:,.2f}"],
+            ["Savings Ratio", f"{savings_ratio:.2f}%"],
+            ["Discretionary Spending", f"{discretionary_spending:.2f}%"],
+            ["High-Cost EMI Payments", f"₹{high_cost_emi:,.2f}"]
+        ]
+        table = Table(data, colWidths=[200, A4[0] - 280])
+        table.setStyle(table_style)
+        story.append(table)
+        story.append(Spacer(1, 30))
+
+        # Debt Metrics
+        story.append(Paragraph("Debt Metrics", styles.get('SectionHeading', styles['Heading2'])))
+        data = [
+            ["DTI Ratio", f"{dti_ratio:.2f}%"],
+            ["Existing Loan Count", str(existing_loan_count)],
+            ["Credit Card Payments", f"₹{credit_card_payments:,.2f}"],
+            ["Bounced Cheques Count", str(bounced_cheques_count)]
+        ]
+        table = Table(data, colWidths=[200, A4[0] - 280])
+        table.setStyle(table_style)
+        story.append(table)
+        story.append(Spacer(1, 30))
+
+        # Cash Flow & Liquidity
+        story.append(Paragraph("Cash Flow & Liquidity", styles.get('SectionHeading', styles['Heading2'])))
+        data = [
+            ["Minimum Monthly Balance", f"₹{min_monthly_balance:,.2f}"],
+            ["Average Closing Balance", f"₹{avg_closing_balance:,.2f}"],
+            ["Overdraft Usage Frequency", str(overdraft_frequency)],
+            ["Negative Balance Days", str(negative_balance_days)]
+        ]
+        table = Table(data, colWidths=[200, A4[0] - 280])
+        table.setStyle(table_style)
+        story.append(table)
+        story.append(Spacer(1, 30))
+
+        # Creditworthiness Indicators
+        story.append(Paragraph("Creditworthiness Indicators", styles.get('SectionHeading', styles['Heading2'])))
+        data = [
+            ["CIBIL Score", str(cibil_score)],
+            ["Payment History", "Derived from statement"],
+            ["Delinquency Flags", str(delinquency_flags)],
+            ["Recent Loan Inquiries", "Not available"]
+        ]
+        table = Table(data, colWidths=[200, A4[0] - 280])
+        table.setStyle(table_style)
+        story.append(table)
+        story.append(Spacer(1, 30))
+
+        # Fraud & Compliance Checks
+        story.append(Paragraph("Fraud & Compliance Checks", styles.get('SectionHeading', styles['Heading2'])))
+        data = [
+            ["Sudden High-Value Credits", str(sudden_high_value_credits)],
+            ["Circular Transactions", str(circular_transactions)],
+            ["Salary Mismatch", "Not detected"],
+            ["Blacklisted Accounts", "Not detected"]
+        ]
+        table = Table(data, colWidths=[200, A4[0] - 280])
+        table.setStyle(table_style)
+        story.append(table)
+        story.append(Spacer(1, 30))
+
+        # Decision Metrics
+        story.append(Paragraph("Decision Metrics", styles.get('SectionHeading', styles['Heading2'])))
+        data = [
+            ["Bank Score", f"{bank_score:.2f}/100"],
+            ["DTI Ratio", f"{dti_ratio:.2f}%"],
+            ["Average Closing Balance", f"₹{avg_closing_balance:,.2f}"],
+            ["CIBIL Score", str(cibil_score)],
+            ["Bounced Cheques", str(bounced_cheques_count)]
+        ]
+        table = Table(data, colWidths=[200, A4[0] - 280])
+        table.setStyle(table_style)
+        story.append(table)
+        story.append(Spacer(1, 30))
+
+        # Final Decision
+        story.append(Paragraph("Final Decision", styles.get('SectionHeading', styles['Heading2'])))
+        story.append(Paragraph(f"<b>{final_action}</b>: {final_reason}", styles.get('DecisionText', styles['Normal'])))
+        story.append(Spacer(1, 30))
+
+        # ML Model Prediction
+        story.append(Paragraph("ML Model Prediction", styles.get('SectionHeading', styles['Heading2'])))
+        data = [
+            ["Prediction", ml_prediction],
+            ["Confidence", f"{ml_probability:.2f}%"]
+        ]
+        table = Table(data, colWidths=[200, A4[0] - 280])
+        table.setStyle(table_style)
+        story.append(table)
+        story.append(Spacer(1, 30))
+
+        # Visualizations
+        story.append(Paragraph("Visualizations", styles.get('SectionHeading', styles['Heading2'])))
+        for plot_path, title in plot_paths:
+            if os.path.exists(plot_path):
+                try:
+                    story.append(Paragraph(safe_str(title), styles.get('Heading3', styles['Heading3'])))
+                    story.append(Image(plot_path, width=A4[0] - 80, height=300, kind='proportional'))
+                    story.append(Spacer(1, 10))
+                except Exception as e:
+                    logger.error(f"Failed to add plot {plot_path} to PDF: {e}")
+
+        # Debug: Log styles immediately before doc.build
+        logger.debug(f"Styles immediately before doc.build: {list(styles.byName.keys())}")
+
+        # Build PDF with error handling
         try:
-            from reportlab.pdfbase import pdfmetrics
-            from reportlab.pdfbase.ttfonts import TTFont
-            # Register standard fonts
-            try:
-                # Use built-in fonts to avoid external dependencies
-                pdfmetrics.registerFont(TTFont('Helvetica', 'Helvetica'))
-                pdfmetrics.registerFont(TTFont('Helvetica-Bold', 'Helvetica-Bold'))
-            except Exception as e:
-                logger.warning(f"Failed to register fonts, using defaults: {e}")
-
-            # Create PDF buffer
-            pdf_buffer = io.BytesIO()
-            doc = SimpleDocTemplate(pdf_buffer, pagesize=A4, leftMargin=40, rightMargin=40, topMargin=40, bottomMargin=40)
-            styles = getSampleStyleSheet()
-
-            # Customize styles
-            styles.add(ParagraphStyle(name='HeaderTitle', fontName='Helvetica-Bold', fontSize=16, leading=20, textColor=colors.HexColor('#333333'), alignment=1))
-            styles.add(ParagraphStyle(name='HeaderText', fontName='Helvetica', fontSize=10, leading=12, textColor=colors.HexColor('#333333'), alignment=1))
-            styles.add(ParagraphStyle(name='SectionHeading', fontName='Helvetica-Bold', fontSize=12, leading=14, textColor=colors.HexColor('#555555'), spaceAfter=5))
-            styles.add(ParagraphStyle(name='DecisionText', fontName='Helvetica-Bold', fontSize=10, leading=12, textColor=colors.HexColor(decision_color)))
-            story = []
-            # Header Section
-            header_table = Table([[Paragraph("Loan Eligibility Report", styles['HeaderTitle'])], [Paragraph(f"Generated on: {timestamp}", styles['HeaderText'])]], colWidths=[A4[0] - 80])
-            header_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F0F0F0')),
-                ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#CCCCCC')),
-                ('ROUNDED', (0, 0), (-1, -1), 8),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                ('PADDING', (0, 0), (-1, 0), 10),
-                ('PADDING', (0, 1), (-1, 1), 5),
-            ]))
-            story.append(header_table)
-            story.append(Spacer(1, 30))
-            # Table Style for all sections
-            table_style = TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#E0E0E0')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 10),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F9F9F9')),
-                ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
-                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 1), (-1, -1), 10),
-                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#DDDDDD')),
-                ('LEFTPADDING', (0, 0), (-1, -1), 12),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 12),
-                ('TOPPADDING', (0, 0), (-1, -1), 12),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
-                ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#DDDDDD')),
-            ])
-            # Applicant Data
-            story.append(Paragraph("Applicant Data", styles['SectionHeading']))
-            data = [
-                ["Name", applicant_name],
-                ["Account Number", account_number],
-                ["CIBIL Score", str(cibil_score)]
-            ]
-            table = Table(data, colWidths=[200, A4[0] - 280])
-            table.setStyle(table_style)
-            story.append(table)
-            story.append(Spacer(1, 30))
-            # Income & Stability
-            story.append(Paragraph("Income & Stability", styles['SectionHeading']))
-            data = [
-                ["Average Monthly Income", f"₹{avg_monthly_income:,.2f}"],
-                ["Income Variability Index", f"{income_variability_index:.2f}"],
-                ["Number of Income Sources", str(num_income_sources)],
-                ["Recent Salary Trend", f"{recent_salary_trend:.2f}%"]
-            ]
-            table = Table(data, colWidths=[200, A4[0] - 280])
-            table.setStyle(table_style)
-            story.append(table)
-            story.append(Spacer(1, 30))
-            # Expenses & Lifestyle
-            story.append(Paragraph("Expenses & Lifestyle", styles['SectionHeading']))
-            data = [
-                ["Average Monthly Expenses", f"₹{avg_monthly_expenses:,.2f}"],
-                ["Savings Ratio", f"{savings_ratio:.2f}%"],
-                ["Discretionary Spending", f"{discretionary_spending:.2f}%"],
-                ["High-Cost EMI Payments", f"₹{high_cost_emi:,.2f}"]
-            ]
-            table = Table(data, colWidths=[200, A4[0] - 280])
-            table.setStyle(table_style)
-            story.append(table)
-            story.append(Spacer(1, 30))
-            # Debt Metrics
-            story.append(Paragraph("Debt Metrics", styles['SectionHeading']))
-            data = [
-                ["DTI Ratio", f"{dti_ratio:.2f}%"],
-                ["Existing Loan Count", str(existing_loan_count)],
-                ["Credit Card Payments", f"₹{credit_card_payments:,.2f}"],
-                ["Bounced Cheques Count", str(bounced_cheques_count)]
-            ]
-            table = Table(data, colWidths=[200, A4[0] - 280])
-            table.setStyle(table_style)
-            story.append(table)
-            story.append(Spacer(1, 30))
-            # Cash Flow & Liquidity
-            story.append(Paragraph("Cash Flow & Liquidity", styles['SectionHeading']))
-            data = [
-                ["Minimum Monthly Balance", f"₹{min_monthly_balance:,.2f}"],
-                ["Average Closing Balance", f"₹{avg_closing_balance:,.2f}"],
-                ["Overdraft Usage Frequency", str(overdraft_frequency)],
-                ["Negative Balance Days", str(negative_balance_days)]
-            ]
-            table = Table(data, colWidths=[200, A4[0] - 280])
-            table.setStyle(table_style)
-            story.append(table)
-            story.append(Spacer(1, 30))
-            # Creditworthiness Indicators
-            story.append(Paragraph("Creditworthiness Indicators", styles['SectionHeading']))
-            data = [
-                ["CIBIL Score", str(cibil_score)],
-                ["Payment History", "Derived from statement"],
-                ["Delinquency Flags", str(delinquency_flags)],
-                ["Recent Loan Inquiries", "Not available"]
-            ]
-            table = Table(data, colWidths=[200, A4[0] - 280])
-            table.setStyle(table_style)
-            story.append(table)
-            story.append(Spacer(1, 30))
-            # Fraud & Compliance Checks
-            story.append(Paragraph("Fraud & Compliance Checks", styles['SectionHeading']))
-            data = [
-                ["Sudden High-Value Credits", str(sudden_high_value_credits)],
-                ["Circular Transactions", str(circular_transactions)],
-                ["Salary Mismatch", "Not detected"],
-                ["Blacklisted Accounts", "Not detected"]
-            ]
-            table = Table(data, colWidths=[200, A4[0] - 280])
-            table.setStyle(table_style)
-            story.append(table)
-            story.append(Spacer(1, 30))
-            # Decision Metrics
-            story.append(Paragraph("Decision Metrics", styles['SectionHeading']))
-            data = [
-                ["Bank Score", f"{bank_score:.2f}/100"],
-                ["DTI Ratio", f"{dti_ratio:.2f}%"],
-                ["Average Closing Balance", f"₹{avg_closing_balance:,.2f}"],
-                ["CIBIL Score", str(cibil_score)],
-                ["Bounced Cheques", str(bounced_cheques_count)]
-            ]
-            table = Table(data, colWidths=[200, A4[0] - 280])
-            table.setStyle(table_style)
-            story.append(table)
-            story.append(Spacer(1, 30))
-            # Final Decision
-            story.append(Paragraph("Final Decision", styles['SectionHeading']))
-            story.append(Paragraph(f"<b>{final_action}</b>: {final_reason}", styles['DecisionText']))
-            story.append(Spacer(1, 30))
-            # ML Model Prediction
-            story.append(Paragraph("ML Model Prediction", styles['SectionHeading']))
-            data = [
-                ["Prediction", ml_prediction],
-                ["Confidence", f"{ml_probability:.2f}%"]
-            ]
-            table = Table(data, colWidths=[200, A4[0] - 280])
-            table.setStyle(table_style)
-            story.append(table)
-            story.append(Spacer(1, 30))
-            # Visualizations
-            story.append(Paragraph("Visualizations", styles['SectionHeading']))
-            for plot_path, title in plot_paths:
-                if os.path.exists(plot_path):
-                    try:
-                        story.append(Paragraph(safe_str(title), styles['Heading3']))
-                        story.append(Image(plot_path, width=A4[0] - 80, height=300, kind='proportional'))
-                        story.append(Spacer(1, 10))
-                    except Exception as e:
-                        logger.error(f"Failed to add plot {plot_path} to PDF: {e}")
-            # Build PDF
             doc.build(story)
             with open(pdf_path, 'wb') as f:
                 f.write(pdf_buffer.getvalue())
             logger.info(f"Saved PDF report: {pdf_path}")
             out["pdf_path"] = str(pdf_path)
         except Exception as e:
-            logger.error(f"Failed to generate PDF with ReportLab: {e}")
+            logger.error(f"Failed to build PDF: {e}")
             out["pdf_path"] = None
-            print("PDF generation failed. HTML report available.")
 
         # Save decision JSON and log
-        print("[11/11] Saving decision JSON and log...")
+        print("Saving decision JSON and log...")
         try:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             record = {
                 "timestamp": timestamp,
-                "file": str(input_path),
+                "file": str(file_path),
                 "cibil": cibil_score,
                 "heuristic_action": heuristic_decision.get("Action"),
                 "heuristic_score": heuristic_decision.get("Total Score"),
@@ -1161,7 +1260,7 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
                 "ml_prediction": ml_result.get("model_prediction") if ml_result else None,
                 "ml_probability": ml_result.get("model_probability") if ml_result else None
             }
-            decision_json = decisions_dir / f"{input_path.stem}_decision.json"
+            decision_json = decisions_dir / f"{applicant_name}_decision.json"
             with open(decision_json, "w", encoding="utf-8") as f:
                 json.dump(record, f, indent=2)
             log_csv = decisions_dir / "decisions_log.csv"
@@ -1258,6 +1357,8 @@ def analyze_file(input_path, cibil_score=None, fill_method="interpolate", out_di
                         )
                 else:
                     st.error("PDF report not available for download.")
+                if out["pdf_path"] is None:
+                    st.error("Failed to generate PDF report. Please check the HTML report or contact support.")
             except Exception as e:
                 logger.error(f"Failed to display Streamlit report: {e}")
                 st.error(f"Failed to display report: {e}")

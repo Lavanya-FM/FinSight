@@ -19,6 +19,7 @@ import pandas as pd
 import hashlib
 import base64
 from visualizer import analyze_file
+
 os.environ["STREAMLIT_SERVER_FILE_WATCHER_TYPE"] = "none"
 
 # Setup logging

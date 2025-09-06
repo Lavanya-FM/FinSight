@@ -9,8 +9,6 @@ from pathlib import Path
 import tempfile
 import logging
 import json
-
-# Import from visualizer
 from visualizer import analyze_file
 from cryptography.fernet import Fernet
 
@@ -21,10 +19,9 @@ logger = logging.getLogger(__name__)
 
 # Initialize Supabase client
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_ANON_KEY = st.secrets["SUPABASE_ANON_KEY"]  # Anon/public key
+SUPABASE_ANON_KEY = st.secrets["SUPABASE_ANON_KEY"]
 supabase = supabase.create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
-#db
 from services.files import save_uploaded_file, fetch_files
 from services.reports import save_report
 from services.base import client, admin_client
@@ -48,7 +45,6 @@ except KeyError:
     cipher_suite = None
 
 def extract_decision_action(decision):
-    """Extract simple action from complex decision object"""
     if isinstance(decision, dict):
         action = decision.get('Action', '').lower().strip()
         if not action:
@@ -73,14 +69,12 @@ def extract_decision_action(decision):
     else:
         return 'manual review'
 
-def save_report_to_database(user_id: str, file_id: str, report_path: str, decision: dict, plots_paths: list = None):
-    """Save the generated PDF report to database and storage - FIXED VERSION"""
+def save_report_to_database(user_id: str, file_id: str, report_path: str, decision: dict, plots_paths: list = None, applicant_name: str = "unknown_applicant"):
     try:
         if not report_path or not os.path.exists(report_path):
             logger.error(f"Report file not found: {report_path}")
             return None
             
-        # Validate inputs
         if not user_id:
             raise ValueError("user_id cannot be empty")
         if not file_id:
@@ -88,33 +82,27 @@ def save_report_to_database(user_id: str, file_id: str, report_path: str, decisi
         if not decision:
             raise ValueError("decision cannot be empty")
             
-        # Convert file_id to int if it's a string
         try:
             file_id_int = int(file_id)
         except ValueError:
             raise ValueError(f"Invalid file_id: {file_id}")
         
-        # Extract simple decision action
         simple_decision = extract_decision_action(decision)
         
-        # Create simplified decision object for database
         db_decision = {
             "Action": simple_decision,
             "Reason": decision.get('Reason', 'Auto-generated decision') if isinstance(decision, dict) else 'Decision extracted'
         }
         
-        # Read report content
         with open(report_path, 'rb') as f:
             report_content = f.read()
         
-        # Upload PDF to Supabase storage
-        report_filename = os.path.basename(report_path)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        storage_path = f"user_{user_id}/reports/{timestamp}_{report_filename}"
+        report_filename = f"{applicant_name}_{timestamp}.pdf"  # FIX: Use provided applicant_name
+        storage_path = f"user_{user_id}/reports/{report_filename}"
         
         logger.info(f"Uploading report to storage: {storage_path}")
         
-        # Upload to storage using admin_client
         upload_response = admin_client.storage.from_('files').upload(
             storage_path, 
             report_content, 
@@ -127,11 +115,10 @@ def save_report_to_database(user_id: str, file_id: str, report_path: str, decisi
         if hasattr(upload_response, 'error') and upload_response.error:
             raise ValueError(f"Storage upload failed: {upload_response.error}")
         
-        # Save report metadata to database using the service
         report_id = save_report(
             user_id=user_id,
             file_id=file_id_int,
-            decision=db_decision,  # Use simplified decision
+            decision=db_decision,
             report_path=storage_path,
             plots_paths=plots_paths or []
         )
@@ -162,28 +149,25 @@ def process_file(file_content, file_type, file_name, models=None):
     error = None
     tmp_file_path = None
     try:
-        # Create a temporary file to store the uploaded content
         tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_type}")
         tmp_file_path = tmp_file.name
         tmp_file.write(file_content)
-        tmp_file.flush()  # Ensure file is written
-        tmp_file.close()  # Close the file to allow other processes to access it
+        tmp_file.flush()
+        tmp_file.close()
         logger.info(f"[DEBUG] Temporary file created: {tmp_file_path}, exists: {os.path.exists(tmp_file_path)}")
 
-        # Verify file accessibility
         if not os.path.exists(tmp_file_path):
             error = f"Temporary file creation failed: {tmp_file_path}"
             logger.error(error)
             return result, error, None, "Unknown", "Unknown"
 
-        # Run visualizer pipeline
         with st.spinner("Generating full analysis and PDF report..."):
-            results = analyze_file(tmp_file_path, cibil_score=720, fill_method="interpolate", out_dir=str(OUTPUT_DIR), applicant_data=None)
+            results = analyze_file(tmp_file_path, cibil_score=720, fill_method="interpolate", out_dir=str(OUTPUT_DIR), original_filename=file_name)
 
-        # Display results
         if results:
             st.header("Loan Analysis Results")
             metrics_df = results.get("metrics_df", pd.DataFrame())
+            applicant_name = results.get("applicant_name", "unknown_applicant")  # FIX: Use name from analyze_file
             monthly_income = float(metrics_df["Average Monthly Income"].iloc[0]) if not metrics_df.empty else 0.0
             monthly_expenses = float(metrics_df["Average Monthly Expenses"].iloc[0]) if not metrics_df.empty and "Average Monthly Expenses" in metrics_df.columns else 0.0
             net_surplus = float(metrics_df["Net Surplus"].iloc[0]) if not metrics_df.empty and "Net Surplus" in metrics_df.columns else monthly_income - monthly_expenses
@@ -246,7 +230,7 @@ def process_file(file_content, file_type, file_name, models=None):
                     st.download_button(
                         label="📥 Download PDF Report",
                         data=f,
-                        file_name=Path(pdf_path).name,
+                        file_name=f"{applicant_name}_720_report.pdf",  # FIX: Use applicant_name
                         mime="application/pdf"
                     )
             else:
@@ -256,6 +240,7 @@ def process_file(file_content, file_type, file_name, models=None):
             summary_data = {
                 "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "File": file_name,
+                "Applicant Name": applicant_name,  # FIX: Log applicant name
                 "CIBIL Score": 720,
                 "Bank Score": bank_score,
                 "Risk Level": risk_level,
@@ -292,8 +277,6 @@ def process_file(file_content, file_type, file_name, models=None):
     finally:
         if tmp_file_path and os.path.exists(tmp_file_path):
             os.unlink(tmp_file_path)
-
-    
 
     st.markdown('</div></div>', unsafe_allow_html=True)
 

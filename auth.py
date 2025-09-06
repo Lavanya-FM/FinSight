@@ -1,20 +1,22 @@
-import streamlit as st
-from app import display_user_dashboard  # Import the user dashboard function from app.py
-from services.files import save_uploaded_file, fetch_files
-from services.reports import save_report, fetch_reports, update_report_decision
-import tempfile
 import os
+import re
+import pdfplumber
 import logging
 import json
 import time
+import streamlit as st
+import tempfile
 from datetime import datetime
-from services.base import client ,ensure_bucket , ensure_session# Import client from services.base
-from visualizer import analyze_file 
 
+from visualizer import analyze_file 
+from app import display_user_dashboard  # Import the user dashboard function from app.py
+from services.files import save_uploaded_file, fetch_files
+from services.base import client ,ensure_bucket , ensure_session# Import client from services.base
+from services.reports import save_report, fetch_reports, update_report_decision
 # Setup logging
 logging.basicConfig(level=logging.INFO, filename='app.log', filemode='a', format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
+    
 # Authentication and routing flow
 def auth_flow(user_id, role):
     if client is None:
@@ -67,10 +69,11 @@ def auth_flow(user_id, role):
                                     analysis_tmp_path = tmp.name
                                     logger.info(f"Created analysis temp file: {analysis_tmp_path}")
                                 with st.spinner("Analyzing..."):
-                                    results = analyze_file(analysis_tmp_path, cibil_score=720, out_dir="outputs")
+                                    results = analyze_file(analysis_tmp_path, cibil_score=None, out_dir="outputs", original_filename=uploaded_file.name)
 
                                     decision_json = results.get("decision_json")
                                     report_path = results.get("pdf_report")
+                                    applicant_name = results.get("applicant_name", "unknown_applicant")  # FIX: Use name from analyze_file
 
                                     decision = {"Action": "Reject", "Reason": "Analysis failed"}
                                     if decision_json and os.path.exists(decision_json):
@@ -79,7 +82,10 @@ def auth_flow(user_id, role):
 
                                 if report_path and os.path.exists(report_path):
                                     with open(report_path, 'rb') as f:
-                                        report_storage_path = f"user_{user_id}/reports/{os.path.basename(report_path)}"
+                                        # FIX: Use extracted applicant name + timestamp for filename
+                                        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                                        report_filename = f"{applicant_name}_{timestamp}.pdf"
+                                        report_storage_path = f"user_{user_id}/reports/{report_filename}"
                                         logger.info(f"Uploading report to: {report_storage_path}")
                                         client.storage.from_('files').upload(
                                             report_storage_path,
@@ -108,7 +114,6 @@ def auth_flow(user_id, role):
                         logger.info(f"Deleted temporary file: {tmp_path}")
                     else:
                         logger.warning(f"Temporary file not found for deletion: {tmp_path}")
-
         
     elif role == "admin":
         # Admin Dashboard
