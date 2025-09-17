@@ -1,0 +1,44 @@
+{
+  "name": "finsight-ui",
+  "version": "0.1.0",
+  "private": true,
+  "homepage": ".",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "axios": "^1.7.7",
+    "babel-loader": "^8.2.5",
+    "bootstrap": "^5.3.3",
+    "eslint-config-react-app": "^7.0.1",
+    "framer-motion": "^11.11.1",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^3.0.2",
+    "jspdf-autotable": "^5.0.2",
+    "lucide-react": "^0.441.0",
+    "react": "^18.3.1",
+    "react-bootstrap": "^2.10.5",
+    "react-dom": "^18.3.1",
+    "react-icons": "^5.5.0",
+    "react-router-dom": "^6.30.1",
+    "react-scripts": "^5.0.1",
+    "recharts": "^2.15.4",
+    "web-vitals": "^5.1.0"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}
