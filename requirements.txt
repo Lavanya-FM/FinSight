@@ -40,3 +40,12 @@ passlib[bcrypt]
 python-dotenv
 extra-streamlit-components
 playwright
+captcha
+psutil==6.0.0
+# Make sure requirements.txt includes:
+streamlit
+fastapi
+uvicorn
+httpx
+websockets
+pyjwt

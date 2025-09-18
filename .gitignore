@@ -12,4 +12,10 @@ bank/
 .streamlit/
 official_models/
 training_log
+*.log
 # .gitignore
+# bank_transaction_tool/.gitignore
+.env
+finsight-ui/.env
+__pycache__/
+*.pyc

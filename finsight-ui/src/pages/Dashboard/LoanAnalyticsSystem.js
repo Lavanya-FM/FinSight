@@ -4,6 +4,13 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { autoTable } from 'jspdf-autotable'; // Import autoTable correctly
+import { createClient } from '@supabase/supabase-js';
+
+// Initialize Supabase client
+const supabase = createClient(
+  process.env.REACT_APP_SUPABASE_URL,
+  process.env.REACT_APP_SUPABASE_ANON_KEY
+);
 
 // Chart color schemes
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8'];
@@ -15,6 +22,8 @@ const API_ENDPOINTS = {
   ANALYZE_DOCUMENT: `${API_BASE_URL}/api/v1/analyze-document`,
   HEALTH_CHECK: `${API_BASE_URL}/api/v1/health`,
   GET_ANALYSIS: `${API_BASE_URL}/api/v1/analysis`,
+  GET_REPORTS: `${API_BASE_URL}/api/v1/reports`,
+  SAVE_REPORT: `${API_BASE_URL}/api/v1/save-report`,
 };
 
 // Add debug log to verify endpoint URLs
@@ -54,6 +63,13 @@ const analyzeFile = async (file, cibilScore) => {
   if (!allowedTypes.includes(file.type)) {
     throw new Error(`File type ${file.type} is not supported.`);
   }
+  
+  const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError || !session) {
+    throw new Error('No user session found. Please log in.');
+  }
+  const token = session.access_token;
+  console.log('Analyzing file with token:', token.substring(0, 20) + '...');
 
   const formData = new FormData();
   formData.append('files', file);
@@ -67,6 +83,9 @@ const analyzeFile = async (file, cibilScore) => {
 
     const response = await fetch(API_ENDPOINTS.ANALYZE_DOCUMENT, {
       method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
       body: formData,
     });
 
@@ -89,18 +108,203 @@ const analyzeFile = async (file, cibilScore) => {
     if (!result.financial_metrics || !result.decision_summary || !result.risk_assessment) {
       throw new Error('Invalid response structure from analysis service');
     }
-
+    
+    // Calculate new insights
+    const incomeStabilityIndex = calculateIncomeStabilityIndex(result);
+    const expenseVolatilityScore = calculateExpenseVolatilityScore(result);
+    const loanAffordabilityRatio = calculateLoanAffordabilityRatio(result);
+    
     return {
       ...result,
-      id: Date.now(),
+      id: Date.now(), // Temporary ID for frontend
       generated_at: new Date().toISOString(),
       client_processed: true,
+      additional_insights: {
+        income_stability_index: incomeStabilityIndex,
+        expense_volatility_score: expenseVolatilityScore,
+        loan_affordability_ratio: loanAffordabilityRatio,
+        insights_summary: generateInsightsSummary({
+          incomeStabilityIndex,
+          expenseVolatilityScore,
+          loanAffordabilityRatio,
+          cibilScore: result.financial_metrics.cibil_score,
+          riskCategory: result.risk_assessment.risk_category,
+        }),
+      },
     };
   } catch (error) {
     console.error('Analysis API error:', error);
     throw error;
   }
 };
+
+// Calculate Income Stability Index
+const calculateIncomeStabilityIndex = (result) => {
+  const variability = result.financial_metrics?.income_variability || 0;
+  const transactionConsistency = result.detailed_analysis?.transaction_frequency || 'Moderate';
+  let stabilityScore = 100 - variability;
+  if (transactionConsistency === 'High') stabilityScore *= 1.1;
+  else if (transactionConsistency === 'Low') stabilityScore *= 0.9;
+  return Math.min(Math.max(Math.round(stabilityScore), 0), 100);
+};
+
+// Calculate Expense Volatility Score
+const calculateExpenseVolatilityScore = (result) => {
+  const monthlyTrends = result.chart_data?.monthly_trends || [];
+  if (monthlyTrends.length < 2) return 0;
+  const expenses = monthlyTrends.map(t => t.expenses);
+  const mean = expenses.reduce((sum, val) => sum + val, 0) / expenses.length;
+  const variance = expenses.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / expenses.length;
+  const stdDev = Math.sqrt(variance);
+  return Math.min(Math.max(Math.round((stdDev / mean) * 100), 0), 100);
+};
+
+// Calculate Loan Affordability Ratio
+const calculateLoanAffordabilityRatio = (result) => {
+  const monthlyIncome = result.financial_metrics?.monthly_income || 0;
+  const monthlyExpenses = result.financial_metrics?.monthly_expenses || 0;
+  const recommendedLoan = parseFloat(result.decision_summary?.recommended_loan_amount) || 0;
+  const disposableIncome = monthlyIncome - monthlyExpenses;
+  if (disposableIncome <= 0) return 0;
+  const ratio = (recommendedLoan / 12) / disposableIncome; // Assuming 12-month loan term
+  return Math.round(ratio * 100);
+};
+
+// Generate Insights Summary
+const generateInsightsSummary = ({ incomeStabilityIndex, expenseVolatilityScore, loanAffordabilityRatio, cibilScore, riskCategory }) => {
+  const insights = [];
+  if (incomeStabilityIndex > 80) insights.push('High income stability indicates reliable cash flow.');
+  else if (incomeStabilityIndex < 50) insights.push('Low income stability suggests repayment challenges.');
+  if (expenseVolatilityScore > 50) insights.push('High expense volatility may impact planning.');
+  else if (expenseVolatilityScore < 20) insights.push('Low expense volatility supports affordability.');
+  if (loanAffordabilityRatio > 100) insights.push('Loan exceeds disposable income, indicating strain.');
+  else if (loanAffordabilityRatio < 50) insights.push('Loan is within disposable income, suggesting affordability.');
+  if (cibilScore >= 750) insights.push('Excellent CIBIL score enhances approval chances.');
+  if (riskCategory === 'High Risk') insights.push('High risk profile requires mitigation strategies.');
+  return insights;
+};
+
+// Save report to database
+const saveReportToDatabase = async (reportData, userId, fileId) => {
+  try {
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError || !session) {
+      throw new Error('No user session found. Please log in.');
+    }
+    const token = session.access_token;
+    console.log('Saving report with token:', token);
+    console.log('Request body:', {
+      file_id: fileId,
+      report_details: reportData,
+      user_id: userId,
+      action: reportData.decision_summary.final_decision,
+      reason: reportData.decision_summary.reason,
+      confidence: parseFloat(reportData.decision_summary.confidence_score),
+    });
+
+    const response = await fetch(API_ENDPOINTS.SAVE_REPORT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        file_id: fileId,
+        report_details: reportData,
+        user_id: userId,
+        action: reportData.decision_summary.final_decision,
+        reason: reportData.decision_summary.reason,
+        confidence: parseFloat(reportData.decision_summary.confidence_score),
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      console.error('Save report error response:', errorData);
+      throw new Error(`Failed to save report: ${errorData.detail || response.statusText}`);
+    }
+
+    const savedReport = await response.json();
+    console.log('Report saved:', savedReport);
+    return savedReport;
+  } catch (error) {
+    console.error('Error saving report:', error);
+    throw error;
+  }
+};
+
+// Reports Component
+const Reports = ({ backendUrl }) => {
+  const [reports, setReports] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedReport, setSelectedReport] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    fetchReports();
+  }, []);
+
+  const fetchReports = async () => {
+    try {
+      const { user } = await supabase.auth.getUser();
+      const token = user?.access_token;
+      const response = await fetch(API_ENDPOINTS.GET_REPORTS, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setReports(data);
+      }
+    } catch (err) {
+      console.error('Error fetching reports:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+};
+const handleDownloadPDF = async (report, index) => {
+    try {
+      setSelectedReport(index);
+      await new Promise(resolve => setTimeout(resolve, 500)); // Wait for render
+      const refs = { monthlyTrendRef, categoryPieRef, riskFactorRef, transactionVolumeRef, financialRatiosRef };
+      const areRefsReady = Object.values(refs).every(ref => ref.current && ref.current.offsetParent !== null);
+      if (!areRefsReady) {
+        throw new Error('Charts are not fully loaded');
+      }
+      const result = await generatePDFReport(report, refs);
+      console.log('PDF generated:', result);
+      alert(`PDF report generated: ${result.filename}`);
+    } catch (error) {
+      console.error('PDF generation failed:', error);
+      alert(`Failed to generate PDF report: ${error.message}`);
+    }
+  };
+
+  const deleteReport = async (reportId) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('No user session found');
+      const token = session.access_token;
+      // Assuming a DELETE endpoint exists; adjust if necessary
+      const response = await fetch(`${API_ENDPOINTS.GET_REPORTS}/${reportId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) throw new Error('Failed to delete report');
+      setReports(prev => prev.filter(report => report.report_id !== reportId));
+      if (selectedReport === reportId) setSelectedReport(null);
+    } catch (error) {
+      console.error('Delete report failed:', error);
+      alert(`Failed to delete report: ${error.message}`);
+    }
+  };
 
 // PDF Generation utility - Enhanced for professional corporate format
 const generatePDFReport = async (analysisData, chartRefs) => {
@@ -129,7 +333,6 @@ const generatePDFReport = async (analysisData, chartRefs) => {
     pdf.setFontSize(8);
     pdf.text(`Page ${pageNum} | &copy; 2025 FinSight. All rights reserved.`, pageWidth / 2, pageHeight - 5, { align: 'center' });
   };
-
 
   // Helper function to add section title
   const addSectionTitle = (title) => {
@@ -183,7 +386,6 @@ const generatePDFReport = async (analysisData, chartRefs) => {
     });
     yOffset = pdf.lastAutoTable?.finalY ? pdf.lastAutoTable.finalY + 10 : yOffset + (rows.length * 10) + 10;
   };
-
 
   // Helper function to add image
   const addImage = async (element, title = null, maxHeight = 100) => {
@@ -261,6 +463,9 @@ const generatePDFReport = async (analysisData, chartRefs) => {
       ['Average Balance', analysisData.financial_metrics?.average_balance ? `₹${analysisData.financial_metrics.average_balance.toLocaleString()}` : 'N/A'],
       ['Total Transactions', analysisData.financial_metrics?.total_transactions || 'N/A'],
       ['Income Variability', analysisData.financial_metrics?.income_variability || 'N/A'],
+      ['Income Stability Index', analysisData.additional_insights?.income_stability_index ? `${analysisData.additional_insights.income_stability_index}/100` : 'N/A'],
+      ['Expense Volatility Score', analysisData.additional_insights?.expense_volatility_score ? `${analysisData.additional_insights.expense_volatility_score}/100` : 'N/A'],
+      ['Loan Affordability Ratio', analysisData.additional_insights?.loan_affordability_ratio ? `${analysisData.additional_insights.loan_affordability_ratio}%` : 'N/A'],
     ];
     addTable(['Metric', 'Value'], metricsTable);
 
@@ -275,9 +480,6 @@ const generatePDFReport = async (analysisData, chartRefs) => {
     addSectionTitle('Compliance and Security Verification');
     const complianceTable = [
       ['AML Status', analysisData.compliance_checks?.aml_status || 'N/A'],
-      ['Document Authenticity', analysisData.compliance_checks?.document_authenticity || 'N/A'],
-      ['Identity Verification', analysisData.compliance_checks?.identity_verification || 'N/A'],
-      ['Address Verification', analysisData.compliance_checks?.address_verification || 'N/A'],
       ['Fraud Indicators', analysisData.compliance_checks?.fraud_indicators ? `${analysisData.compliance_checks.fraud_indicators} detected` : 'N/A'],
     ];
     addTable(['Check', 'Status'], complianceTable);
@@ -292,6 +494,17 @@ const generatePDFReport = async (analysisData, chartRefs) => {
       ['Seasonal Variations', analysisData.detailed_analysis?.seasonal_variations || 'N/A'],
     ];
     addTable(['Indicator', 'Value'], detailedTable);
+
+    // Additional Insights
+    addSectionTitle('Additional Financial Insights');
+    const insightsTable = [
+      ['Income Stability Index', analysisData.additional_insights?.income_stability_index ? `${analysisData.additional_insights.income_stability_index}/100` : 'N/A'],
+      ['Expense Volatility Score', analysisData.additional_insights?.expense_volatility_score ? `${analysisData.additional_insights.expense_volatility_score}/100` : 'N/A'],
+      ['Loan Affordability Ratio', analysisData.additional_insights?.loan_affordability_ratio ? `${analysisData.additional_insights.loan_affordability_ratio}%` : 'N/A'],
+    ];
+    addTable(['Insight', 'Value'], insightsTable);
+    addParagraph('Summary of Insights:');
+    analysisData.additional_insights?.insights_summary.forEach(insight => addParagraph(`• ${insight}`));
 
     // Charts Section
     pdf.addPage();
@@ -311,6 +524,9 @@ const generatePDFReport = async (analysisData, chartRefs) => {
     await addImage(chartRefs.transactionVolumeRef.current, 'Transaction Volume Over Time');
     addParagraph('Insight: Steady transaction volume with no unusual spikes, indicating normal activity.');
 
+    await addImage(chartRefs.financialRatiosRef.current, 'Key Financial Ratios');
+    addParagraph('Insight: Balanced ratios indicate strong financial health.');
+
     // Recommendations
     pdf.addPage();
     addHeader();
@@ -320,12 +536,6 @@ const generatePDFReport = async (analysisData, chartRefs) => {
     (analysisData.recommendations || []).forEach((rec, idx) => {
       addParagraph(`${idx + 1}. ${rec || 'N/A'}`);
     });
-
-    // Additional Insights
-    addSectionTitle('Additional Insights');
-    addParagraph(`Income Variability Analysis: The income shows ${analysisData.financial_metrics?.income_variability || 'N/A'} variability, which may impact loan repayment consistency.`);
-    addParagraph(`Savings Trend: With a savings rate of ${analysisData.financial_metrics?.savings_rate || 'N/A'}%, the applicant demonstrates good financial discipline.`);
-    addParagraph(`Risk Mitigation: Focus on reducing high-risk factors such as ${(analysisData.risk_assessment?.risk_factors || []).filter(f => f.score > 70).map(f => f.factor).join(', ') || 'N/A'}.`);
 
     // Add footers to all pages
     const pages = pdf.internal.getNumberOfPages();
@@ -412,6 +622,18 @@ const TransactionVolumeChart = ({ data }) => (
   </ResponsiveContainer>
 );
 
+const FinancialRatiosChart = ({ data }) => (
+  <ResponsiveContainer width="100%" height={300}>
+    <BarChart data={data}>
+      <CartesianGrid strokeDasharray="3 3" />
+      <XAxis dataKey="name" />
+      <YAxis />
+      <Tooltip formatter={(value) => [`${value}%`, 'Value']} />
+      <Bar dataKey="value" fill="#8884d8" />
+    </BarChart>
+  </ResponsiveContainer>
+);
+
 const LoanAnalyticsSystem = () => {
   const [step, setStep] = useState(1);
   const [currentView, setCurrentView] = useState('upload');
@@ -420,6 +642,7 @@ const LoanAnalyticsSystem = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResults, setAnalysisResults] = useState([]);
   const [selectedResult, setSelectedResult] = useState(null);
+  const [user, setUser] = useState(null);
   const [savedReports, setSavedReports] = useState([]);
 
   // Chart refs for PDF capture
@@ -427,8 +650,20 @@ const LoanAnalyticsSystem = () => {
   const categoryPieRef = useRef(null);
   const riskFactorRef = useRef(null);
   const transactionVolumeRef = useRef(null);
+  const financialRatiosRef = useRef(null);
 
   useEffect(() => {
+    const getUser = async () => {
+      const { data: { user }, error } = await supabase.auth.getUser();
+      if (error) {
+        console.error('Error fetching user:', error);
+        alert('Please log in to continue');
+        return;
+      }
+      setUser(user);
+    };
+    getUser();
+    
     const verifyAPI = async () => {
       const isHealthy = await checkAPIHealth();
       if (!isHealthy) {
@@ -460,15 +695,35 @@ const LoanAnalyticsSystem = () => {
   };
 
   const handleAnalysis = async () => {
+    if (!user) {
+      alert('Please log in to analyze documents');
+      return;
+    }
     if (uploadedFiles.length === 0) {
       alert("Please upload at least one file");
       return;
     }
-
+    if (!cibilScore || isNaN(cibilScore) || cibilScore < 300 || cibilScore > 900) {
+      alert('Please enter a valid CIBIL score between 300 and 900');
+      return;
+    }
     setIsAnalyzing(true);
     try {
       const results = await Promise.all(
-        uploadedFiles.map(async (file) => await analyzeFile(file, parseInt(cibilScore)))
+        uploadedFiles.map(async (file) => {
+        const analysisResult = await analyzeFile(file, parseInt(cibilScore));
+        console.log('File ID from analysis:', analysisResult.file_analysis?.file_id);
+        if (!analysisResult.file_analysis?.file_id) {
+          throw new Error('File ID is missing in analysis result');
+        }
+        // Save to database
+        const savedReport = await saveReportToDatabase(
+          analysisResult,
+          user.id,
+          analysisResult.file_analysis.file_id
+        );
+        return { ...analysisResult, report_id: savedReport.report_id };
+      })
       );
       console.log('All analysis results:', results);
       setAnalysisResults(results);
@@ -496,6 +751,7 @@ const LoanAnalyticsSystem = () => {
         categoryPieRef,
         riskFactorRef,
         transactionVolumeRef,
+        financialRatiosRef,
       });
       console.log('PDF generated:', result);
       alert(`PDF report generated: ${result.filename}`);
