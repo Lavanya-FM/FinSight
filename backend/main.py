@@ -2,7 +2,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse
 from typing import List
 import logging
@@ -34,15 +34,15 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 app.router.redirect_slashes = False
 
-# Add CORS middleware
+# Add CORS middleware EARLY (before routes)
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://finsight-gold.vercel.app")  # Set in Render env vars
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL] if FRONTEND_URL else [],
+    allow_origins=[FRONTEND_URL],  # Specific origin, not "*"
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # Validate Supabase configuration
 if not SUPABASE_URL or not SUPABASE_KEY:
@@ -75,11 +75,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/favicon.ico")
 async def get_favicon():
-    favicon_path = "static/favicon.ico"
-    if not os.path.exists(favicon_path):
-        logger.error(f"Favicon not found at {favicon_path}")
-        return Response(status_code=204)
-    return FileResponse(favicon_path)
+    return FileResponse("static/favicon.ico")
 
 @app.get("/")
 async def read_root():
@@ -402,3 +398,8 @@ async def analyze_bank_statement(
         "files_received": [file.filename for file in files],
         **analysis_result
     }
+
+if __name__ == "__main__":
+    import uvicorn
+    logger.info("Starting FastAPI server")
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
