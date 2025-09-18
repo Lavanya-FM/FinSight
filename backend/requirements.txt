@@ -6,3 +6,4 @@ numpy
 pandas
 matplotlib
 supabase
+python-multipart
