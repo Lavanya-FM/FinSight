@@ -1,19 +1,20 @@
 version: "3.9"
+
 services:
   backend:
     build: ./backend
-    container_name: fastapi-backend
+    container_name: finsight-backend
     ports:
       - "8000:8000"
-    volumes:
-      - ./backend:/app
-    environment:
-      - PYTHONUNBUFFERED=1
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    env_file:
+      - ./backend/.env
 
   frontend:
     build: ./finsight-ui
-    container_name: react-frontend
+    container_name: finsight-frontend
     ports:
-      - "3000:80"
-    depends_on:
-      - backend
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    command: npm start
