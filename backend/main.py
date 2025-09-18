@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from fastapi.security import OAuth2AuthorizationCodeBearer
 from jwt import decode as jwt_decode, PyJWTError
 from services.inference import load_models, run_inference
+from pathlib import Path
 
 # Load environment variables
 load_dotenv()
@@ -164,10 +165,18 @@ async def store_file_metadata(file: UploadFile, user_id: str, cibil_score: int):
         logger.error(f"Error storing file metadata: {e}")
         raise HTTPException(status_code=500, detail="Failed to store file metadata")   
 try:
-    models = load_models("backend/models")
-    logger.info("Models loaded successfully")
+    BASE_DIR = Path(__file__).resolve().parent
+    models_dir = BASE_DIR / "models"   # works both locally and on Render
+
+    if not models_dir.exists():
+        raise FileNotFoundError(f"Models directory not found: {models_dir}")
+
+    models = load_models(str(models_dir))
+    logger.info("Models loaded successfully from %s", models_dir)
+
 except Exception as e:
     logger.error(f"Failed to load models: {e}")
+    models = None  # prevent crash, app can still run
 
 class PredictionRequest(BaseModel):
     model_name: str
