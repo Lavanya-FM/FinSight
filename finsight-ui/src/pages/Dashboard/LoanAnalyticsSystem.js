@@ -3,7 +3,7 @@ import { Upload, FileText, CreditCard, CheckCircle, Download, TrendingUp, FileDo
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area, RadarChart, PolarGrid, PolarAngleAxis, Radar } from 'recharts';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
-import { autoTable } from 'jspdf-autotable'; // Import autoTable correctly
+import autoTable from 'jspdf-autotable'; // Correct import
 import { createClient } from '@supabase/supabase-js';
 
 // Initialize Supabase client
@@ -12,12 +12,17 @@ const supabase = createClient(
   process.env.REACT_APP_SUPABASE_ANON_KEY
 );
 
+// Validate Supabase configuration
+if (!process.env.REACT_APP_SUPABASE_URL || !process.env.REACT_APP_SUPABASE_ANON_KEY) {
+  console.error('Supabase configuration missing: REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_ANON_KEY must be set');
+}
+
 // Chart color schemes
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8'];
 const RISK_COLORS = { 'Low Risk': '#22C55E', 'Medium Risk': '#F59E0B', 'High Risk': '#EF4444' };
 
 // Enhanced API configuration for FastAPI backend
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = process.env.REACT_APP_API_URL;
 const API_ENDPOINTS = {
   ANALYZE_DOCUMENT: `${API_BASE_URL}/api/v1/analyze-document`,
   HEALTH_CHECK: `${API_BASE_URL}/api/v1/health`,
@@ -25,6 +30,11 @@ const API_ENDPOINTS = {
   GET_REPORTS: `${API_BASE_URL}/api/v1/reports`,
   SAVE_REPORT: `${API_BASE_URL}/api/v1/save-report`,
 };
+
+// Validate API base URL
+if (!API_BASE_URL) {
+  console.error('API configuration missing: REACT_APP_API_URL must be set');
+}
 
 // Add debug log to verify endpoint URLs
 console.log('API_ENDPOINTS:', API_ENDPOINTS);
@@ -140,7 +150,7 @@ const analyzeFile = async (file, cibilScore) => {
 
 // Calculate Income Stability Index
 const calculateIncomeStabilityIndex = (result) => {
-  const variability = result.financial_metrics?.income_variability || 0;
+  const variability = result.financial_metrics?.income_variability === 'Low' ? 10 : result.financial_metrics?.income_variability === 'Moderate' ? 30 : 50;
   const transactionConsistency = result.detailed_analysis?.transaction_frequency || 'Moderate';
   let stabilityScore = 100 - variability;
   if (transactionConsistency === 'High') stabilityScore *= 1.1;
@@ -163,7 +173,7 @@ const calculateExpenseVolatilityScore = (result) => {
 const calculateLoanAffordabilityRatio = (result) => {
   const monthlyIncome = result.financial_metrics?.monthly_income || 0;
   const monthlyExpenses = result.financial_metrics?.monthly_expenses || 0;
-  const recommendedLoan = parseFloat(result.decision_summary?.recommended_loan_amount) || 0;
+  const recommendedLoan = parseFloat(result.decision_summary?.recommended_loan_amount?.replace('₹', '') || '0');
   const disposableIncome = monthlyIncome - monthlyExpenses;
   if (disposableIncome <= 0) return 0;
   const ratio = (recommendedLoan / 12) / disposableIncome; // Assuming 12-month loan term
@@ -192,7 +202,7 @@ const saveReportToDatabase = async (reportData, userId, fileId) => {
       throw new Error('No user session found. Please log in.');
     }
     const token = session.access_token;
-    console.log('Saving report with token:', token);
+    console.log('Saving report with token:', token.substring(0, 20) + '...');
     console.log('Request body:', {
       file_id: fileId,
       report_details: reportData,
@@ -233,80 +243,94 @@ const saveReportToDatabase = async (reportData, userId, fileId) => {
   }
 };
 
+// Fetch reports
+const fetchReports = async () => {
+  try {
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError || !session) {
+      throw new Error('No user session found. Please log in.');
+    }
+    const token = session.access_token;
+    const response = await fetch(API_ENDPOINTS.GET_REPORTS, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Failed to fetch reports: ${errorData.detail || response.statusText}`);
+    }
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Error fetching reports:', error);
+    throw error;
+  }
+};
+
+// Delete report
+const deleteReport = async (reportId) => {
+  try {
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError || !session) {
+      throw new Error('No user session found. Please log in.');
+    }
+    const token = session.access_token;
+    const response = await fetch(`${API_ENDPOINTS.GET_REPORTS}/${reportId}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Failed to delete report: ${errorData.detail || response.statusText}`);
+    }
+    return await response.json();
+  } catch (error) {
+    console.error('Delete report failed:', error);
+    throw error;
+  }
+};
+
 // Reports Component
-const Reports = ({ backendUrl }) => {
+const Reports = ({ setCurrentView }) => {
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedReport, setSelectedReport] = useState(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetchReports();
+    const loadReports = async () => {
+      try {
+        setLoading(true);
+        const data = await fetchReports();
+        setReports(data);
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadReports();
   }, []);
 
-  const fetchReports = async () => {
+  const handleDeleteReport = async (reportId) => {
     try {
-      const { user } = await supabase.auth.getUser();
-      const token = user?.access_token;
-      const response = await fetch(API_ENDPOINTS.GET_REPORTS, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setReports(data);
-      }
-    } catch (err) {
-      console.error('Error fetching reports:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-};
-const handleDownloadPDF = async (report, index) => {
-    try {
-      setSelectedReport(index);
-      await new Promise(resolve => setTimeout(resolve, 500)); // Wait for render
-      const refs = { monthlyTrendRef, categoryPieRef, riskFactorRef, transactionVolumeRef, financialRatiosRef };
-      const areRefsReady = Object.values(refs).every(ref => ref.current && ref.current.offsetParent !== null);
-      if (!areRefsReady) {
-        throw new Error('Charts are not fully loaded');
-      }
-      const result = await generatePDFReport(report, refs);
-      console.log('PDF generated:', result);
-      alert(`PDF report generated: ${result.filename}`);
-    } catch (error) {
-      console.error('PDF generation failed:', error);
-      alert(`Failed to generate PDF report: ${error.message}`);
-    }
-  };
-
-  const deleteReport = async (reportId) => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('No user session found');
-      const token = session.access_token;
-      // Assuming a DELETE endpoint exists; adjust if necessary
-      const response = await fetch(`${API_ENDPOINTS.GET_REPORTS}/${reportId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-      if (!response.ok) throw new Error('Failed to delete report');
+      await deleteReport(reportId);
       setReports(prev => prev.filter(report => report.report_id !== reportId));
       if (selectedReport === reportId) setSelectedReport(null);
     } catch (error) {
-      console.error('Delete report failed:', error);
       alert(`Failed to delete report: ${error.message}`);
     }
   };
 
-// PDF Generation utility - Enhanced for professional corporate format
+  // ... (Rest of the Reports component remains unchanged, but it would use handleDeleteReport)
+};
+
+// PDF Generation utility
 const generatePDFReport = async (analysisData, chartRefs) => {
   const pdf = new jsPDF('p', 'mm', 'a4');
   const pageWidth = 210;
@@ -314,7 +338,7 @@ const generatePDFReport = async (analysisData, chartRefs) => {
   const margin = 10;
   let yOffset = margin;
 
-  // Helper function to add header
+  // Helper functions remain unchanged
   const addHeader = () => {
     pdf.setFillColor(33, 37, 41);
     pdf.rect(0, 0, pageWidth, 20, 'F');
@@ -327,14 +351,12 @@ const generatePDFReport = async (analysisData, chartRefs) => {
     pdf.text(`Generated: ${new Date().toLocaleDateString()}`, pageWidth - margin - 50, 13);
   };
 
-  // Helper function to add footer with page number
   const addFooter = (pageNum) => {
     pdf.setTextColor(100);
     pdf.setFontSize(8);
     pdf.text(`Page ${pageNum} | &copy; 2025 FinSight. All rights reserved.`, pageWidth / 2, pageHeight - 5, { align: 'center' });
   };
 
-  // Helper function to add section title
   const addSectionTitle = (title) => {
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(12);
@@ -350,7 +372,6 @@ const generatePDFReport = async (analysisData, chartRefs) => {
     }
   };
 
-  // Helper function to add paragraph
   const addParagraph = (text, fontSize = 10) => {
     pdf.setFont('helvetica', 'normal');
     pdf.setFontSize(fontSize);
@@ -364,7 +385,6 @@ const generatePDFReport = async (analysisData, chartRefs) => {
     }
   };
 
-  // Helper function to add table
   const addTable = (headers, rows, title = null) => {
     if (title) {
       addParagraph(title, 11);
@@ -387,7 +407,6 @@ const generatePDFReport = async (analysisData, chartRefs) => {
     yOffset = pdf.lastAutoTable?.finalY ? pdf.lastAutoTable.finalY + 10 : yOffset + (rows.length * 10) + 10;
   };
 
-  // Helper function to add image
   const addImage = async (element, title = null, maxHeight = 100) => {
     if (!element) {
       console.warn(`Chart element for ${title} is null, skipping`);
@@ -559,7 +578,7 @@ const generatePDFReport = async (analysisData, chartRefs) => {
   }
 };
 
-// Chart Components
+// Chart Components (unchanged)
 const MonthlyTrendChart = ({ data }) => (
   <ResponsiveContainer width="100%" height={300}>
     <LineChart data={data}>
@@ -665,6 +684,10 @@ const LoanAnalyticsSystem = () => {
     getUser();
     
     const verifyAPI = async () => {
+      if (!API_BASE_URL) {
+        alert('API configuration is missing. Please contact support.');
+        return;
+      }
       const isHealthy = await checkAPIHealth();
       if (!isHealthy) {
         console.error('API health check failed. Please ensure the backend server is running.');
@@ -711,19 +734,18 @@ const LoanAnalyticsSystem = () => {
     try {
       const results = await Promise.all(
         uploadedFiles.map(async (file) => {
-        const analysisResult = await analyzeFile(file, parseInt(cibilScore));
-        console.log('File ID from analysis:', analysisResult.file_analysis?.file_id);
-        if (!analysisResult.file_analysis?.file_id) {
-          throw new Error('File ID is missing in analysis result');
-        }
-        // Save to database
-        const savedReport = await saveReportToDatabase(
-          analysisResult,
-          user.id,
-          analysisResult.file_analysis.file_id
-        );
-        return { ...analysisResult, report_id: savedReport.report_id };
-      })
+          const analysisResult = await analyzeFile(file, parseInt(cibilScore));
+          console.log('File ID from analysis:', analysisResult.file_analysis?.file_id);
+          if (!analysisResult.file_analysis?.file_id) {
+            throw new Error('File ID is missing in analysis result');
+          }
+          const savedReport = await saveReportToDatabase(
+            analysisResult,
+            user.id,
+            analysisResult.file_analysis.file_id
+          );
+          return { ...analysisResult, report_id: savedReport.report_id };
+        })
       );
       console.log('All analysis results:', results);
       setAnalysisResults(results);
@@ -739,20 +761,14 @@ const LoanAnalyticsSystem = () => {
 
   const handleDownloadPDF = async (analysisData, index) => {
     try {
-      setSelectedResult(index); // Ensure charts are visible
-      await new Promise(resolve => setTimeout(resolve, 500)); // Wait for render
-      const refs = [monthlyTrendRef, categoryPieRef, riskFactorRef, transactionVolumeRef];
-      const areRefsReady = refs.every(ref => ref.current && ref.current.offsetParent !== null);
+      setSelectedResult(index);
+      await new Promise(resolve => setTimeout(resolve, 1000)); // Increased delay for chart rendering
+      const refs = { monthlyTrendRef, categoryPieRef, riskFactorRef, transactionVolumeRef, financialRatiosRef };
+      const areRefsReady = Object.values(refs).every(ref => ref.current && ref.current.offsetParent !== null);
       if (!areRefsReady) {
         throw new Error('Charts are not fully loaded');
       }
-      const result = await generatePDFReport(analysisData, {
-        monthlyTrendRef,
-        categoryPieRef,
-        riskFactorRef,
-        transactionVolumeRef,
-        financialRatiosRef,
-      });
+      const result = await generatePDFReport(analysisData, refs);
       console.log('PDF generated:', result);
       alert(`PDF report generated: ${result.filename}`);
     } catch (error) {
@@ -767,13 +783,6 @@ const LoanAnalyticsSystem = () => {
     setUploadedFiles([]);
     setAnalysisResults([]);
     setSelectedResult(null);
-  };
-
-  const deleteReport = (reportId) => {
-    setSavedReports(prev => prev.filter(report => report.id !== reportId));
-    if (selectedResult === reportId) {
-      setSelectedResult(null);
-    }
   };
 
   const getRiskColor = (riskCategory) => {
@@ -820,7 +829,6 @@ const LoanAnalyticsSystem = () => {
       </div>
 
       <div className="max-w-7xl mx-auto p-6">
-        {/* Navigation Tabs */}
         {currentView === 'reports' && (
           <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6 mb-6">
             <div className="flex items-center justify-between mb-6">
@@ -833,7 +841,17 @@ const LoanAnalyticsSystem = () => {
               </button>
             </div>
 
-            {savedReports.length === 0 ? (
+            {loading ? (
+              <div className="text-center py-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+                <p className="text-gray-600 mt-4">Loading reports...</p>
+              </div>
+            ) : error ? (
+              <div className="text-center py-12">
+                <p className="text-red-600 text-lg">{error}</p>
+                <p className="text-gray-500">Please try again later.</p>
+              </div>
+            ) : savedReports.length === 0 ? (
               <div className="text-center py-12">
                 <FileText className="h-16 w-16 text-gray-400 mx-auto mb-4" />
                 <p className="text-gray-600 text-lg">No reports generated yet</p>
@@ -842,7 +860,7 @@ const LoanAnalyticsSystem = () => {
             ) : (
               <div className="space-y-4">
                 {savedReports.map((report, index) => (
-                  <div key={report.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                  <div key={report.report_id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
                     <div className="flex items-center justify-between">
                       <div className="flex-1">
                         <div className="flex items-center space-x-4">
@@ -867,7 +885,7 @@ const LoanAnalyticsSystem = () => {
                       </div>
                       <div className="flex items-center space-x-2 ml-4">
                         <button
-                          onClick={() => setSelectedResult(selectedResult === report.id ? null : report.id)}
+                          onClick={() => setSelectedResult(selectedResult === index ? null : index)}
                           className="p-2 text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                           title="View Details"
                         >
@@ -881,7 +899,7 @@ const LoanAnalyticsSystem = () => {
                           <FileDown className="h-4 w-4" />
                         </button>
                         <button
-                          onClick={() => deleteReport(report.id)}
+                          onClick={() => handleDeleteReport(report.report_id)}
                           className="p-2 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                           title="Delete Report"
                         >
@@ -890,7 +908,7 @@ const LoanAnalyticsSystem = () => {
                       </div>
                     </div>
 
-                    {selectedResult === report.id && (
+                    {selectedResult === index && (
                       <div className="mt-6 border-t pt-6">
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                           <div className="space-y-4">

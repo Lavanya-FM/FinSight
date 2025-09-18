@@ -1,20 +1,17 @@
 import os
 import logging
-import subprocess
 import signal
-import time
-import threading
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client
 from dotenv import load_dotenv
 from typing import Optional
-import requests
-from urllib.parse import urlencode
 from pathlib import Path
+import time
+from fastapi.staticfiles import StaticFiles
+
 
 # Load environment variables
 load_dotenv()
@@ -36,75 +33,11 @@ else:
     admin_client = None
     logger.warning("Supabase not configured properly")
 
-BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
-
-# Streamlit configuration
-STREAMLIT_PORT = int(os.getenv("STREAMLIT_PORT", 8501))
-STREAMLIT_URL = f"http://localhost:{STREAMLIT_PORT}"
-streamlit_process = None
-
-def start_streamlit():
-    global streamlit_process
-    if streamlit_process is None or streamlit_process.poll() is not None:
-        try:
-            streamlit_process = subprocess.Popen([
-                "streamlit", "run", "dashboard.py",
-                "--server.port", str(STREAMLIT_PORT),
-                "--server.address", "0.0.0.0",  # Allow external access
-                "--server.headless", "true",
-                "--browser.gatherUsageStats", "false",
-                "--server.enableCORS", "false",
-                "--server.enableXsrfProtection", "false"
-            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            logger.info(f"Started Streamlit on port {STREAMLIT_PORT}")
-            time.sleep(5)  # Give it time to start
-        except Exception as e:
-            logger.error(f"Failed to start Streamlit: {str(e)}")
-
-def stop_streamlit():
-    global streamlit_process
-    if streamlit_process:
-        try:
-            streamlit_process.terminate()
-            streamlit_process.wait(timeout=5)
-            logger.info("Streamlit server stopped")
-        except subprocess.TimeoutExpired:
-            streamlit_process.kill()
-            logger.info("Streamlit server killed")
-        except Exception as e:
-            logger.error(f"Error stopping Streamlit: {str(e)}")
-
-def start_streamlit_with_retry():
-    max_attempts = 3
-    for attempt in range(max_attempts):
-        try:
-            start_streamlit()
-            time.sleep(3)
-            response = requests.get(f"{STREAMLIT_URL}/_stcore/health", timeout=5)
-            if response.status_code == 200:
-                logger.info("Streamlit startup successful")
-                break
-            else:
-                logger.warning(f"Streamlit health check failed on attempt {attempt + 1}")
-        except Exception as e:
-            logger.error(f"Streamlit startup attempt {attempt + 1} failed: {str(e)}")
-            if attempt < max_attempts - 1:
-                time.sleep(2)
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup
-    logger.info("FastAPI app starting up...")
-    threading.Thread(target=start_streamlit_with_retry, daemon=True).start()
-    yield
-    # Shutdown
-    logger.info("FastAPI app shutting down...")
-    stop_streamlit()
+BASE_URL = os.getenv("BASE_URL")
 
 # Create FastAPI app with explicit prefix handling
 app = FastAPI(
     title="FinSight API",
-    lifespan=lifespan,
     docs_url="/api/docs",
     redoc_url="/api/redoc"
 )
@@ -168,13 +101,6 @@ def get_user_session_from_request(request: Request):
         logger.error(f"Session check from request failed: {str(e)}")
         return None
 
-def is_streamlit_ready():
-    try:
-        response = requests.get(f"{STREAMLIT_URL}/_stcore/health", timeout=3)
-        return response.status_code == 200
-    except Exception:
-        return False
-
 # Add request logging middleware
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -234,26 +160,17 @@ async def logout_api(request: Request):
         logger.info("User logged out successfully")
         response = JSONResponse(content={"status": "success"})
         response.delete_cookie("supabase_token")
-        response.delete_cookie("streamlit_session_token")
         return response
     except Exception as e:
         logger.error(f"Failed to sign out from Supabase: {str(e)}")
         return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
 
-@app.get("/api/streamlit-health")
-async def streamlit_health_api():
-    logger.info("API streamlit-health endpoint called")
-    return {"ready": is_streamlit_ready()}
-
 @app.get("/health")
 async def health_check():
     logger.info("Health check endpoint called")
     try:
-        streamlit_ready = is_streamlit_ready()
         return {
             "status": "healthy",
-            "streamlit": "running" if streamlit_ready else "not running",
-            "streamlit_url": STREAMLIT_URL,
             "supabase_configured": bool(SUPABASE_URL and SUPABASE_ANON_KEY),
             "build_exists": BUILD_DIR.exists(),
             "base_url": BASE_URL
@@ -270,98 +187,8 @@ async def debug_session(request: Request):
         "user_session": user_session,
         "cookies": dict(request.cookies),
         "headers": dict(request.headers),
-        "streamlit_url": STREAMLIT_URL,
-        "streamlit_ready": is_streamlit_ready(),
         "base_url": BASE_URL
     }
-
-# Dashboard route
-@app.get("/dashboard")
-async def serve_dashboard(request: Request):
-    logger.info("Dashboard endpoint called")
-    logger.info(f"Request cookies: {list(request.cookies.keys())}")
-    
-    user_session = get_user_session_from_request(request)
-    if not user_session:
-        logger.warning("No valid session for dashboard, redirecting to login")
-        return RedirectResponse(url="/login", status_code=302)
-    
-    logger.info(f"Valid session for user {user_session['username']}, checking Streamlit status")
-    
-    if not is_streamlit_ready():
-        logger.warning("Streamlit not ready, attempting to start...")
-        start_streamlit()
-        for i in range(10):
-            time.sleep(1)
-            if is_streamlit_ready():
-                logger.info("Streamlit is now ready")
-                break
-        else:
-            logger.error("Streamlit failed to start within timeout")
-            return HTMLResponse("""
-            <html><body><div style="text-align: center; padding: 2rem; font-family: Arial, sans-serif;">
-                <h2 style="color: #e74c3c;">Dashboard Service Unavailable</h2>
-                <p>The dashboard service is temporarily unavailable. Please try again in a few moments.</p>
-                <button onclick="window.location.reload()">Retry</button>
-                <script>setTimeout(function() { window.location.reload(); }, 5000);</script>
-            </div></body></html>
-            """, status_code=503)
-    
-    params = {
-        "user_id": user_session["user_id"],
-        "username": user_session["username"],
-        "role": user_session["role"],
-        "ref": "fastapi"
-    }
-    streamlit_url_with_params = f"{STREAMLIT_URL}?{urlencode(params)}"
-    logger.info(f"Redirecting to Streamlit: {streamlit_url_with_params}")
-    
-    redirect_response = RedirectResponse(url=streamlit_url_with_params, status_code=302)
-    redirect_response.set_cookie("streamlit_user_id", user_session["user_id"], httponly=False, secure=False, samesite="lax")
-    redirect_response.set_cookie("streamlit_username", user_session["username"], httponly=False, secure=False, samesite="lax")
-    redirect_response.set_cookie("streamlit_role", user_session["role"], httponly=False, secure=False, samesite="lax")
-    return redirect_response
-
-# Serve Streamlit dashboard within iframe
-@app.get("/dashboard/streamlit")
-async def serve_streamlit_dashboard(request: Request):
-    logger.info("Streamlit dashboard endpoint called")
-    user_session = get_user_session_from_request(request)
-    if not user_session:
-        logger.warning("No valid session, redirecting to login")
-        return RedirectResponse(url="/login", status_code=302)
-
-    if not is_streamlit_ready():
-        logger.warning("Streamlit not ready, attempting to start...")
-        start_streamlit()
-        for i in range(10):
-            time.sleep(1)
-            if is_streamlit_ready():
-                logger.info("Streamlit is now ready")
-                break
-        else:
-            logger.error("Streamlit failed to start within timeout")
-            return HTMLResponse("""
-            <html><body><div style="text-align: center; padding: 2rem;">
-                <h2>Dashboard Unavailable</h2>
-                <p>Please try again in a moment.</p>
-                <button onclick="location.reload()">Retry</button>
-            </div></body></html>
-            """, status_code=503)
-
-    params = {
-        "user_id": user_session["user_id"],
-        "username": user_session["username"],
-        "role": user_session["role"]
-    }
-    streamlit_url = f"{STREAMLIT_URL}?{urlencode(params)}"
-    return HTMLResponse(f"""
-    <html>
-      <body style="margin: 0; padding: 0; overflow: hidden;">
-        <iframe src="{streamlit_url}" style="width: 100%; height: 100vh; border: none;" title="Streamlit Dashboard"></iframe>
-      </body>
-    </html>
-    """)
 
 # Static file handling
 if BUILD_DIR.exists():
@@ -420,7 +247,6 @@ async def serve_spa(full_path: str, request: Request):
 
 def signal_handler(sig, frame):
     logger.info("Received shutdown signal")
-    stop_streamlit()
     exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
@@ -429,10 +255,6 @@ signal.signal(signal.SIGTERM, signal_handler)
 if __name__ == "__main__":
     import uvicorn
     logger.info("Starting FastAPI server...")
-    
-    # Start streamlit in background
-    start_streamlit()
-    
     try:
         uvicorn.run(
             app, 
@@ -443,7 +265,5 @@ if __name__ == "__main__":
         )
     except KeyboardInterrupt:
         logger.info("Shutting down...")
-        stop_streamlit()
     except Exception as e:
         logger.error(f"Server error: {str(e)}")
-        stop_streamlit()

@@ -1,6 +1,9 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse
 from typing import List
 import logging
 import random
@@ -21,7 +24,7 @@ load_dotenv()
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET") or os.getenv("SUPABASE_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")  # Fallback for local dev
+FRONTEND_URL = os.getenv("FRONTEND_URL")  # Fallback for local dev
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -30,6 +33,16 @@ logger = logging.getLogger(__name__)
 # FastAPI app
 app = FastAPI()
 app.router.redirect_slashes = False
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[FRONTEND_URL] if FRONTEND_URL else [],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 # Validate Supabase configuration
 if not SUPABASE_URL or not SUPABASE_KEY:
@@ -57,7 +70,33 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     except Exception as e:
         logger.error(f"Unexpected error in get_current_user: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
-          
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+@app.get("/favicon.ico")
+async def get_favicon():
+    favicon_path = "static/favicon.ico"
+    if not os.path.exists(favicon_path):
+        logger.error(f"Favicon not found at {favicon_path}")
+        return Response(status_code=204)
+    return FileResponse(favicon_path)
+
+@app.get("/")
+async def read_root():
+    return JSONResponse(
+        status_code=404,
+        content={
+            "message": "This is an API-only service. Please use the appropriate API endpoints.",
+            "available_endpoints": [
+                "/api/v1/health",
+                "/api/v1/reports",
+                "/api/v1/predict",
+                "/api/v1/analyze-document",
+                "/api/v1/save-report"
+            ]
+        }
+    )
+
 @app.get("/api/v1/health")
 async def health_check():
     logger.info("Health check endpoint called")
@@ -363,8 +402,3 @@ async def analyze_bank_statement(
         "files_received": [file.filename for file in files],
         **analysis_result
     }
-
-if __name__ == "__main__":
-    import uvicorn
-    logger.info("Starting FastAPI server")
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
