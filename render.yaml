@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: fastapi-backend
+    env: docker
+    dockerfilePath: ./backend/Dockerfile
+    plan: free
+
+  - type: web
+    name: react-frontend
+    env: docker
+    dockerfilePath: ./finsight-ui/Dockerfile
+    plan: free

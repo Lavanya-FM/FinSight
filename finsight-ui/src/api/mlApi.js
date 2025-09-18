@@ -1,15 +1,11 @@
-import axios from "axios";
-
-const API_BASE = "http://localhost:8000"; // Update with backend URL
-
-// Call ML API with CIBIL + uploaded document
-export const analyzeBankStatement = async (cibilScore, file) => {
-  const formData = new FormData();
-  formData.append("cibil_score", cibilScore);
-  formData.append("file", file);
-
-  const res = await axios.post(`${API_BASE}/analyze/`, formData, {
-    headers: { "Content-Type": "multipart/form-data" },
+// finsight-ui/src/api/mlApi.js
+const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000";
+// REACT_APP_API_URL=https://your-backend-service.onrender.com
+export async function fetchPrediction(data) {
+  const response = await fetch(`${API_BASE_URL}/predict`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
   });
-  return res.data;
-};
+  return response.json();
+}
