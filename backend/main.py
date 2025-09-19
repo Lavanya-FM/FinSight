@@ -34,17 +34,17 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 app.router.redirect_slashes = False
 
-# Add CORS middleware EARLY (before routes)
-FRONTEND_URL = os.getenv("FRONTEND_URL", "https://finsight-gold.vercel.app")  # Set in Render env vars
-# CORS Configuration: Allow localhost:3000 explicitly (safer than '*')
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", FRONTEND_URL],  # Add your frontend origins
-    allow_credentials=True,  # Allows cookies/tokens
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Include OPTIONS for preflight
-    allow_headers=["*"],  # Allows Authorization, Content-Type, etc.
-    expose_headers=[],  # Optional: Headers client can access
-    max_age=600,  # Cache preflight for 10 min
+    allow_origins=[
+        "https://finsight-gold.vercel.app",  # Your Vercel frontend URL
+        "http://localhost:3000",  # Allow local development
+        # Add "*" for testing (insecure for production; use specific origins)
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods (GET, POST, etc.)
+    allow_headers=["*"],  # Allows all headers
 )
 
 # Validate Supabase configuration
