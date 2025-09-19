@@ -1,28 +1,40 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Upload, FileText, CreditCard, CheckCircle, Download, TrendingUp, FileDown, Eye, Trash2, Calendar, DollarSign, Shield, Target } from 'lucide-react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area, RadarChart, PolarGrid, PolarAngleAxis, Radar } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area, RadarChart, PolarGrid, PolarAngleAxis, Radar, BarChart, Bar } from 'recharts';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable'; // Correct import
 import { createClient } from '@supabase/supabase-js';
+import { debounce } from 'lodash';
+import { toast, ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 
-// Initialize Supabase client
-const supabase = createClient(
-  process.env.REACT_APP_SUPABASE_URL,
-  process.env.REACT_APP_SUPABASE_ANON_KEY
-);
+// Singleton Supabase client to avoid multiple instances
+let supabaseClient = null;
+const getSupabase = () => {
+  if (!supabaseClient) {
+    supabaseClient = createClient(
+      process.env.REACT_APP_SUPABASE_URL,
+      process.env.REACT_APP_SUPABASE_ANON_KEY
+    );
+  }
+  return supabaseClient;
+};
 
 // Validate Supabase configuration
 if (!process.env.REACT_APP_SUPABASE_URL || !process.env.REACT_APP_SUPABASE_ANON_KEY) {
   console.error('Supabase configuration missing: REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_ANON_KEY must be set');
 }
 
+const supabase = getSupabase();
+
 // Chart color schemes
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8'];
 const RISK_COLORS = { 'Low Risk': '#22C55E', 'Medium Risk': '#F59E0B', 'High Risk': '#EF4444' };
 
 // Enhanced API configuration for FastAPI backend
-const API_BASE_URL = process.env.REACT_APP_API_URL;
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+console.log('API_BASE_URL:', API_BASE_URL); // Debug log
 const API_ENDPOINTS = {
   ANALYZE_DOCUMENT: `${API_BASE_URL}/api/v1/analyze-document`,
   HEALTH_CHECK: `${API_BASE_URL}/api/v1/health`,
@@ -39,15 +51,13 @@ if (!API_BASE_URL) {
 // Add debug log to verify endpoint URLs
 console.log('API_ENDPOINTS:', API_ENDPOINTS);
 
-// Health check function
+// Health check function (with CORS workaround for testing)
 const checkAPIHealth = async () => {
   try {
     console.log('Checking API health at:', API_ENDPOINTS.HEALTH_CHECK);
-    const response = await fetch(API_ENDPOINTS.HEALTH_CHECK, {
-      method: 'GET',
-    });
+    const response = await fetch(API_ENDPOINTS.HEALTH_CHECK, { method: 'GET' });
     const responseBody = await response.json().catch(() => ({}));
-    console.log('Health check response:', response.status, response.statusText, responseBody);
+    console.log('Health check response:', response.status, responseBody);
     return response.ok;
   } catch (error) {
     console.warn('API health check failed:', error);
@@ -295,41 +305,6 @@ const deleteReport = async (reportId) => {
   }
 };
 
-// Reports Component
-const Reports = ({ setCurrentView }) => {
-  const [reports, setReports] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedReport, setSelectedReport] = useState(null);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    const loadReports = async () => {
-      try {
-        setLoading(true);
-        const data = await fetchReports();
-        setReports(data);
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadReports();
-  }, []);
-
-  const handleDeleteReport = async (reportId) => {
-    try {
-      await deleteReport(reportId);
-      setReports(prev => prev.filter(report => report.report_id !== reportId));
-      if (selectedReport === reportId) setSelectedReport(null);
-    } catch (error) {
-      alert(`Failed to delete report: ${error.message}`);
-    }
-  };
-
-  // ... (Rest of the Reports component remains unchanged, but it would use handleDeleteReport)
-};
-
 // PDF Generation utility
 const generatePDFReport = async (analysisData, chartRefs) => {
   const pdf = new jsPDF('p', 'mm', 'a4');
@@ -345,7 +320,7 @@ const generatePDFReport = async (analysisData, chartRefs) => {
     pdf.setTextColor(255, 255, 255);
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(14);
-    pdf.text('Corporate Loan Analytics Report', margin, 13);
+    pdf.text('Loan Analytics Report', margin, 13);
     pdf.setFontSize(10);
     pdf.setFont('helvetica', 'normal');
     pdf.text(`Generated: ${new Date().toLocaleDateString()}`, pageWidth - margin - 50, 13);
@@ -408,37 +383,37 @@ const generatePDFReport = async (analysisData, chartRefs) => {
   };
 
   const addImage = async (element, title = null, maxHeight = 100) => {
-    if (!element) {
-      console.warn(`Chart element for ${title} is null, skipping`);
-      addParagraph(`[Chart: ${title} could not be rendered]`, 10);
-      return;
-    }
-    if (title) {
-      addSectionTitle(title);
-    }
-    if (yOffset + maxHeight > pageHeight - 30) {
-      pdf.addPage();
-      addHeader();
-      yOffset = 25;
-    }
-    try {
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        backgroundColor: '#FFFFFF',
-        useCORS: true,
-        logging: true,
-      });
-      const imgData = canvas.toDataURL('image/png');
-      const imgProps = pdf.getImageProperties(imgData);
-      const width = pageWidth - 2 * margin;
-      const height = Math.min((imgProps.height * width) / imgProps.width, maxHeight);
-      pdf.addImage(imgData, 'PNG', margin, yOffset, width, height);
-      yOffset += height + 10;
-    } catch (error) {
-      console.error(`Failed to capture chart ${title}:`, error);
-      addParagraph(`[Error rendering chart: ${title}]`, 10);
-    }
-  };
+  if (!element || !element.current || element.current.offsetParent === null) {
+  console.warn(`Chart element for ${title} is not available or not rendered, skipping`);
+  addParagraph(`[Chart: ${title} could not be rendered]`, 10);
+  return;
+}
+  if (title) {
+    addSectionTitle(title);
+  }
+  if (yOffset + maxHeight > pageHeight - 30) {
+    pdf.addPage();
+    addHeader();
+    yOffset = 25;
+  }
+  try {
+    const canvas = await html2canvas(element.current, {
+      scale: 2,
+      backgroundColor: '#FFFFFF',
+      useCORS: true,
+      logging: true,
+    });
+    const imgData = canvas.toDataURL('image/png');
+    const imgProps = pdf.getImageProperties(imgData);
+    const width = pageWidth - 2 * margin;
+    const height = Math.min((imgProps.height * width) / imgProps.width, maxHeight);
+    pdf.addImage(imgData, 'PNG', margin, yOffset, width, height);
+    yOffset += height + 10;
+  } catch (error) {
+    console.error(`Failed to capture chart ${title}:`, error);
+    addParagraph(`[Error rendering chart: ${title}]`, 10);
+  }
+};
 
   try {
     // Validate analysisData
@@ -514,6 +489,12 @@ const generatePDFReport = async (analysisData, chartRefs) => {
     ];
     addTable(['Indicator', 'Value'], detailedTable);
 
+    // Fix: Use analysisData instead of result
+    const financialRatiosData = analysisData.chart_data?.financial_ratios ? [
+      { name: 'Savings Rate', value: analysisData.financial_metrics?.savings_rate || 0 },
+      { name: 'Debt-to-Income', value: analysisData.financial_metrics?.debt_to_income_ratio || 0 },
+    ] : [];
+
     // Additional Insights
     addSectionTitle('Additional Financial Insights');
     const insightsTable = [
@@ -531,20 +512,41 @@ const generatePDFReport = async (analysisData, chartRefs) => {
     yOffset = 25;
     addSectionTitle('Data Visualizations and Insights');
 
-    await addImage(chartRefs.monthlyTrendRef.current, 'Monthly Income vs Expenses Trend');
-    addParagraph('Insight: The trend shows consistent income with controlled expenses, indicating good financial stability.');
+    // Validate chart data before rendering
+    if (analysisData.chart_data?.monthly_trends?.length > 0) {
+      await addImage(chartRefs.monthlyTrendRef, 'Monthly Income vs Expenses Trend');
+      addParagraph('Insight: The trend shows consistent income with controlled expenses, indicating good financial stability.');
+    } else {
+      addParagraph('[No data available for Monthly Income vs Expenses Trend]', 10);
+    }
 
-    await addImage(chartRefs.categoryPieRef.current, 'Category-wise Expense Breakdown');
-    addParagraph('Insight: Housing and food dominate expenses, suggesting potential areas for cost optimization.');
+    if (analysisData.chart_data?.category_breakdown?.length > 0) {
+      await addImage(chartRefs.categoryPieRef, 'Category-wise Expense Breakdown');
+      addParagraph('Insight: Housing and food dominate expenses, suggesting potential areas for cost optimization.');
+    } else {
+      addParagraph('[No data available for Category-wise Expense Breakdown]', 10);
+    }
 
-    await addImage(chartRefs.riskFactorRef.current, 'Risk Factor Analysis (Radar Chart)');
-    addParagraph('Insight: Low risk in income stability but higher in debt load, recommending debt reduction strategies.');
+    if (analysisData.risk_assessment?.risk_factors?.length > 0) {
+      await addImage(chartRefs.riskFactorRef, 'Risk Factor Analysis (Radar Chart)');
+      addParagraph('Insight: Low risk in income stability but higher in debt load, recommending debt reduction strategies.');
+    } else {
+      addParagraph('[No data available for Risk Factor Analysis]', 10);
+    }
 
-    await addImage(chartRefs.transactionVolumeRef.current, 'Transaction Volume Over Time');
-    addParagraph('Insight: Steady transaction volume with no unusual spikes, indicating normal activity.');
+    if (analysisData.chart_data?.transaction_volume?.length > 0) {
+      await addImage(chartRefs.transactionVolumeRef, 'Transaction Volume Over Time');
+      addParagraph('Insight: Steady transaction volume with no unusual spikes, indicating normal activity.');
+    } else {
+      addParagraph('[No data available for Transaction Volume Over Time]', 10);
+    }
 
-    await addImage(chartRefs.financialRatiosRef.current, 'Key Financial Ratios');
-    addParagraph('Insight: Balanced ratios indicate strong financial health.');
+    if (chartRefs.financialRatiosRef && financialRatiosData.length > 0) {
+      await addImage(chartRefs.financialRatiosRef, 'Key Financial Ratios');
+      addParagraph('Insight: Balanced ratios indicate strong financial health.');
+    } else {
+      addParagraph('[No data available for Key Financial Ratios]', 10);
+    }
 
     // Recommendations
     pdf.addPage();
@@ -578,80 +580,99 @@ const generatePDFReport = async (analysisData, chartRefs) => {
   }
 };
 
-// Chart Components (unchanged)
-const MonthlyTrendChart = ({ data }) => (
-  <ResponsiveContainer width="100%" height={300}>
-    <LineChart data={data}>
-      <CartesianGrid strokeDasharray="3 3" />
-      <XAxis dataKey="month" />
-      <YAxis />
-      <Tooltip formatter={(value) => [`₹${value.toLocaleString()}`, '']} />
-      <Line type="monotone" dataKey="income" stroke="#8884d8" strokeWidth={3} name="Income" />
-      <Line type="monotone" dataKey="expenses" stroke="#82ca9d" strokeWidth={3} name="Expenses" />
-      <Line type="monotone" dataKey="balance" stroke="#ffc658" strokeWidth={3} name="Balance" />
-    </LineChart>
-  </ResponsiveContainer>
-);
+// Chart Components
+const MonthlyTrendChart = ({ data = [] }) => {
+  if (!data.length) return <div>No data available for Monthly Trends</div>;
+  return (
+    <ResponsiveContainer width="100%" height={300}>
+      <LineChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" />
+        <XAxis dataKey="month" />
+        <YAxis />
+        <Tooltip formatter={(value) => [`₹${value.toLocaleString()}`, '']} />
+        <Line type="monotone" dataKey="income" stroke="#8884d8" strokeWidth={3} name="Income" />
+        <Line type="monotone" dataKey="expenses" stroke="#82ca9d" strokeWidth={3} name="Expenses" />
+        <Line type="monotone" dataKey="balance" stroke="#ffc658" strokeWidth={3} name="Balance" />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+};
 
-const CategoryPieChart = ({ data }) => (
-  <ResponsiveContainer width="100%" height={300}>
-    <PieChart>
-      <Pie
-        data={data}
-        cx="50%"
-        cy="50%"
-        labelLine={false}
-        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-        outerRadius={80}
-        fill="#8884d8"
-        dataKey="value"
-      >
-        {data.map((entry, index) => (
-          <Cell key={`cell-${index}`} fill={entry.color} />
-        ))}
-      </Pie>
-      <Tooltip formatter={(value) => [`₹${value.toLocaleString()}`, 'Amount']} />
-    </PieChart>
-  </ResponsiveContainer>
-);
+const CategoryPieChart = ({ data = [] }) => {
+  if (!data.length) return <div>No data available for Category Breakdown</div>;
+  const chartData = data.map((entry, index) => ({
+    ...entry,
+    color: entry.color || COLORS[index % COLORS.length],
+  }));
+  return (
+    <ResponsiveContainer width="100%" height={300}>
+      <PieChart>
+        <Pie
+          data={chartData}
+          cx="50%"
+          cy="50%"
+          labelLine={false}
+          label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+          outerRadius={80}
+          fill="#8884d8"
+          dataKey="value"
+        >
+          {chartData.map((entry, index) => (
+            <Cell key={`cell-${index}`} fill={entry.color} />
+          ))}
+        </Pie>
+        <Tooltip formatter={(value) => [`₹${value.toLocaleString()}`, 'Amount']} />
+      </PieChart>
+    </ResponsiveContainer>
+  );
+};
 
-const RiskFactorChart = ({ data }) => (
-  <ResponsiveContainer width="100%" height={300}>
-    <RadarChart data={data}>
-      <PolarGrid />
-      <PolarAngleAxis dataKey="factor" />
-      <Radar name="Risk Score" dataKey="score" stroke="#8884d8" fill="#8884d8" fillOpacity={0.6} />
-      <Tooltip formatter={(value) => [`${value}/100`, 'Score']} />
-    </RadarChart>
-  </ResponsiveContainer>
-);
+const RiskFactorChart = ({ data = [] }) => {
+  if (!data.length) return <div>No data available for Risk Factors</div>;
+  return (
+    <ResponsiveContainer width="100%" height={300}>
+      <RadarChart data={data}>
+        <PolarGrid />
+        <PolarAngleAxis dataKey="factor" />
+        <Radar name="Risk Score" dataKey="score" stroke="#8884d8" fill="#8884d8" fillOpacity={0.6} />
+        <Tooltip formatter={(value) => [`${value}/100`, 'Score']} />
+      </RadarChart>
+    </ResponsiveContainer>
+  );
+};
 
-const TransactionVolumeChart = ({ data }) => (
-  <ResponsiveContainer width="100%" height={300}>
-    <AreaChart data={data}>
-      <CartesianGrid strokeDasharray="3 3" />
-      <XAxis dataKey="month" />
-      <YAxis />
-      <Tooltip formatter={(value, name) => [
-        name === 'volume' ? value : `₹${value.toLocaleString()}`,
-        name === 'volume' ? 'Transactions' : 'Amount'
-      ]} />
-      <Area type="monotone" dataKey="volume" stackId="1" stroke="#8884d8" fill="#8884d8" />
-    </AreaChart>
-  </ResponsiveContainer>
-);
+const TransactionVolumeChart = ({ data = [] }) => {
+  if (!data.length) return <div>No data available for Transaction Volume</div>;
+  return (
+    <ResponsiveContainer width="100%" height={300}>
+      <AreaChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" />
+        <XAxis dataKey="month" />
+        <YAxis />
+        <Tooltip formatter={(value, name) => [
+          name === 'volume' ? value : `₹${value.toLocaleString()}`,
+          name === 'volume' ? 'Transactions' : 'Amount'
+        ]} />
+        <Area type="monotone" dataKey="volume" stackId="1" stroke="#8884d8" fill="#8884d8" />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+};
 
-const FinancialRatiosChart = ({ data }) => (
-  <ResponsiveContainer width="100%" height={300}>
-    <BarChart data={data}>
-      <CartesianGrid strokeDasharray="3 3" />
-      <XAxis dataKey="name" />
-      <YAxis />
-      <Tooltip formatter={(value) => [`${value}%`, 'Value']} />
-      <Bar dataKey="value" fill="#8884d8" />
-    </BarChart>
-  </ResponsiveContainer>
-);
+const FinancialRatiosChart = ({ data = [] }) => {
+  if (!data.length) return <div>No data available for Financial Ratios</div>;
+  return (
+    <ResponsiveContainer width="100%" height={300}>
+      <BarChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" />
+        <XAxis dataKey="name" />
+        <YAxis />
+        <Tooltip formatter={(value) => [`${value}%`, 'Value']} />
+        <Bar dataKey="value" fill="#8884d8" />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+};
 
 const LoanAnalyticsSystem = () => {
   const [step, setStep] = useState(1);
@@ -663,6 +684,10 @@ const LoanAnalyticsSystem = () => {
   const [selectedResult, setSelectedResult] = useState(null);
   const [user, setUser] = useState(null);
   const [savedReports, setSavedReports] = useState([]);
+  const [loading, setLoading] = useState(false); // Added
+  const [error, setError] = useState(null); // Added
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+  const [pdfReportIndex, setPdfReportIndex] = useState(null); // Track report being processed for PDF
 
   // Chart refs for PDF capture
   const monthlyTrendRef = useRef(null);
@@ -670,6 +695,13 @@ const LoanAnalyticsSystem = () => {
   const riskFactorRef = useRef(null);
   const transactionVolumeRef = useRef(null);
   const financialRatiosRef = useRef(null);
+
+  // Off-screen refs for PDF generation
+  const offscreenMonthlyTrendRef = useRef(null);
+  const offscreenCategoryPieRef = useRef(null);
+  const offscreenRiskFactorRef = useRef(null);
+  const offscreenTransactionVolumeRef = useRef(null);
+  const offscreenFinancialRatiosRef = useRef(null);
 
   useEffect(() => {
     const getUser = async () => {
@@ -697,7 +729,88 @@ const LoanAnalyticsSystem = () => {
       }
     };
     verifyAPI();
-  }, []);
+    const loadReports = async () => {
+      if (currentView === 'reports') {
+        setLoading(true);
+        setError(null);
+        try {
+          const reports = await fetchReports();
+          setSavedReports(reports);
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setLoading(false);
+        }
+      }
+    };
+    loadReports();
+  }, [currentView]);
+
+  const handleDownloadPDF = debounce(async (analysisData, index) => {
+    setIsGeneratingPDF(true);
+    setPdfReportIndex(index); // Set the report index for off-screen rendering
+    try {
+      // Ensure the report details are expanded
+      setSelectedResult(index);
+      
+      // Wait for charts to render
+      const areChartsReady = await new Promise((resolve) => {
+        let attempts = 0;
+        const maxAttempts = 100;
+        const checkCharts = () => {
+          const refs = [
+            offscreenMonthlyTrendRef,
+            offscreenCategoryPieRef,
+            offscreenRiskFactorRef,
+            offscreenTransactionVolumeRef,
+            ...(analysisData.chart_data?.financial_ratios ? [offscreenFinancialRatiosRef] : []),
+          ];
+          const areRefsReady = refs.every(ref => ref.current && ref.current.offsetParent !== null);
+          if (areRefsReady || attempts >= maxAttempts) {
+            console.log('Chart refs check:', {
+              monthlyTrendRef: offscreenMonthlyTrendRef.current ? 'Ready' : 'Not Ready',
+              categoryPieRef: offscreenCategoryPieRef.current ? 'Ready' : 'Not Ready',
+              riskFactorRef: offscreenRiskFactorRef.current ? 'Ready' : 'Not Ready',
+              transactionVolumeRef: offscreenTransactionVolumeRef.current ? 'Ready' : 'Not Ready',
+              financialRatiosRef: analysisData.chart_data?.financial_ratios && offscreenFinancialRatiosRef.current ? 'Ready' : 'Not Ready or Not Applicable',
+              attempts,
+              areRefsReady,
+            });
+            
+            resolve(areRefsReady);
+          } else {
+            attempts++;
+            setTimeout(checkCharts, 100);
+          }
+        };
+        setTimeout(checkCharts, 200);
+      });
+
+      if (!areChartsReady) {
+        throw new Error('Not all charts are fully rendered. Please try again.');
+      }
+
+      const refs = {
+        monthlyTrendRef: offscreenMonthlyTrendRef,
+        categoryPieRef: offscreenCategoryPieRef,
+        riskFactorRef: offscreenRiskFactorRef,
+        transactionVolumeRef: offscreenTransactionVolumeRef,
+        ...(analysisData.chart_data?.financial_ratios && { financialRatiosRef: offscreenFinancialRatiosRef }),
+      };
+
+      const result = await generatePDFReport(analysisData, refs);
+      console.log('PDF generated:', result);
+      toast.success(`PDF report generated: ${result.filename}`);
+    } catch (error) {
+      console.error('PDF generation failed:', error);
+      toast.error(`Failed to generate PDF report: ${error.message}`);
+    } finally {
+      setIsGeneratingPDF(false);
+      setPdfReportIndex(null);
+      // Optionally reset selectedResult to collapse the report
+      // setSelectedResult(null);
+    }
+  }, 1000);
 
   const handleCibilSubmit = () => {
     const score = parseInt(cibilScore);
@@ -751,29 +864,27 @@ const LoanAnalyticsSystem = () => {
       setAnalysisResults(results);
       setSavedReports(prev => [...prev, ...results]);
       setStep(3);
+      toast.success('Analysis completed successfully');
     } catch (error) {
       console.error("Analysis failed:", error);
-      alert(`Analysis failed: ${error.message}`);
+      toast.error(`Analysis failed: ${error.message}`);
     } finally {
       setIsAnalyzing(false);
     }
   };
 
-  const handleDownloadPDF = async (analysisData, index) => {
+  const handleDeleteReport = async (reportId) => {
     try {
-      setSelectedResult(index);
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Increased delay for chart rendering
-      const refs = { monthlyTrendRef, categoryPieRef, riskFactorRef, transactionVolumeRef, financialRatiosRef };
-      const areRefsReady = Object.values(refs).every(ref => ref.current && ref.current.offsetParent !== null);
-      if (!areRefsReady) {
-        throw new Error('Charts are not fully loaded');
-      }
-      const result = await generatePDFReport(analysisData, refs);
-      console.log('PDF generated:', result);
-      alert(`PDF report generated: ${result.filename}`);
-    } catch (error) {
-      console.error('PDF generation failed:', error);
-      alert(`Failed to generate PDF report: ${error.message}`);
+      setLoading(true);
+      setError(null);
+      await deleteReport(reportId);
+      setSavedReports((prev) => prev.filter((report) => report.report_id !== reportId));
+      alert('Report deleted successfully');
+    } catch (err) {
+      setError(`Failed to delete report: ${err.message}`);
+      alert(`Failed to delete report: ${err.message}`);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -797,6 +908,31 @@ const LoanAnalyticsSystem = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
+      <ToastContainer position="top-right" autoClose={5000} />
+      {/* Off-screen rendering for PDF charts */}
+      <div style={{ position: 'absolute', left: '-9999px', top: '-9999px', width: '800px', height: '600px' }}>
+        {pdfReportIndex !== null && savedReports[pdfReportIndex] && (
+          <div>
+            <div ref={offscreenMonthlyTrendRef}>
+              <MonthlyTrendChart data={savedReports[pdfReportIndex].chart_data?.monthly_trends || []} />
+            </div>
+            <div ref={offscreenCategoryPieRef}>
+              <CategoryPieChart data={savedReports[pdfReportIndex].chart_data?.category_breakdown || []} />
+            </div>
+            <div ref={offscreenRiskFactorRef}>
+              <RiskFactorChart data={savedReports[pdfReportIndex].risk_assessment?.risk_factors || []} />
+            </div>
+            <div ref={offscreenTransactionVolumeRef}>
+              <TransactionVolumeChart data={savedReports[pdfReportIndex].chart_data?.transaction_volume || []} />
+            </div>
+            {savedReports[pdfReportIndex].chart_data?.financial_ratios && (
+              <div ref={offscreenFinancialRatiosRef}>
+                <FinancialRatiosChart data={savedReports[pdfReportIndex].chart_data.financial_ratios} />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
       {/* Header */}
       <div className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-6 py-4">
@@ -828,8 +964,10 @@ const LoanAnalyticsSystem = () => {
         </div>
       </div>
 
+
       <div className="max-w-7xl mx-auto p-6">
         {currentView === 'reports' && (
+          
           <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6 mb-6">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-bold text-gray-900">Analysis Reports</h2>
@@ -893,10 +1031,15 @@ const LoanAnalyticsSystem = () => {
                         </button>
                         <button
                           onClick={() => handleDownloadPDF(report, index)}
-                          className="p-2 text-gray-600 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                          disabled={isGeneratingPDF}
+                          className={`p-2 text-gray-600 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors ${isGeneratingPDF ? 'opacity-50 cursor-not-allowed' : ''}`}
                           title="Download PDF"
                         >
-                          <FileDown className="h-4 w-4" />
+                          {isGeneratingPDF ? (
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-green-600" />
+                          ) : (
+                            <FileDown className="h-4 w-4" />
+                          )}
                         </button>
                         <button
                           onClick={() => handleDeleteReport(report.report_id)}
@@ -976,6 +1119,12 @@ const LoanAnalyticsSystem = () => {
                               <h5 className="font-medium text-gray-900 mb-3">Transaction Volume</h5>
                               <TransactionVolumeChart data={report.chart_data.transaction_volume} />
                             </div>
+                            {result.chart_data.financial_ratios && (
+                            <div className="bg-gray-50 border rounded-lg p-4" ref={financialRatiosRef}>
+                              <h5 className="font-medium text-gray-900 mb-3">Key Financial Ratios</h5>
+                              <FinancialRatiosChart data={result.chart_data.financial_ratios} />
+                            </div>
+                          )}
                           </div>
                         </div>
 

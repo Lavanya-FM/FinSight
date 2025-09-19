@@ -36,12 +36,15 @@ app.router.redirect_slashes = False
 
 # Add CORS middleware EARLY (before routes)
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://finsight-gold.vercel.app")  # Set in Render env vars
+# CORS Configuration: Allow localhost:3000 explicitly (safer than '*')
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL],  # Specific origin, not "*"
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", FRONTEND_URL],  # Add your frontend origins
+    allow_credentials=True,  # Allows cookies/tokens
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Include OPTIONS for preflight
+    allow_headers=["*"],  # Allows Authorization, Content-Type, etc.
+    expose_headers=[],  # Optional: Headers client can access
+    max_age=600,  # Cache preflight for 10 min
 )
 
 # Validate Supabase configuration
@@ -98,6 +101,10 @@ async def health_check():
     logger.info("Health check endpoint called")
     return {"status": "ok"}
 
+@app.options("/api/v1/analyze-document")  # Explicit OPTIONS handler (optional, middleware should cover)
+async def options_handler():
+    return {}
+
 @app.get("/api/v1/analysis")
 async def get_analysis():
     logger.info("Analysis endpoint called")
@@ -109,6 +116,14 @@ async def log_requests(request, call_next):
     response = await call_next(request)
     logger.info(f"Response status: {response.status_code}")
     return response
+
+@app.get("/api/v1/settings")
+async def get_settings():
+    return {
+        "theme": "light",
+        "timezone": "UTC",
+        "notifications": True
+    }
 
 # Fetch all reports
 @app.get("/api/v1/reports")
@@ -364,8 +379,26 @@ def extract_financial_data(file: UploadFile, cibil_score: int):
         "analysis_version": "1.0.0",
     }
 
+class Settings(BaseModel):
+    notifications: bool
+    theme: str
+
+# In-memory storage (replace with DB)
+stored_settings = {"notifications": True, "theme": "light"}
+
+@app.get("/api/settings")
+async def get_settings():
+    return stored_settings
+
+@app.put("/api/settings")
+async def update_settings(settings: Settings):
+    global stored_settings
+    stored_settings = settings.dict()
+    print(f"Updated settings: {stored_settings}")  # Debug log
+    return {"message": "Settings updated successfully", "settings": stored_settings}
+
 @app.post("/api/v1/analyze-document")
-async def analyze_bank_statement(
+async def analyze(
     cibil_score: int = Form(...),
     files: List[UploadFile] = File(...),
     analysis_type: str = Form(...),

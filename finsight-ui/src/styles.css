@@ -31,7 +31,8 @@
     --border-radius-sm: 6px;
     --border-radius-md: 12px;
     --border-radius-lg: 20px;
-    
+    .dark-theme { background: #1a1a1a; color: #fff; }
+    .light-theme { background: #fff; color: #000; }
     /* Spacing System */
     --spacing-unit: 16px;
 }
