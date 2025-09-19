@@ -33,14 +33,13 @@ const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8'];
 const RISK_COLORS = { 'Low Risk': '#22C55E', 'Medium Risk': '#F59E0B', 'High Risk': '#EF4444' };
 
 // Enhanced API configuration for FastAPI backend
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
-console.log('API_BASE_URL:', API_BASE_URL); // Debug log
+const API_BASE_URL = '/api';  // Use relative path
 const API_ENDPOINTS = {
-  ANALYZE_DOCUMENT: `${API_BASE_URL}/api/v1/analyze-document`,
-  HEALTH_CHECK: `${API_BASE_URL}/api/v1/health`,
-  GET_ANALYSIS: `${API_BASE_URL}/api/v1/analysis`,
-  GET_REPORTS: `${API_BASE_URL}/api/v1/reports`,
-  SAVE_REPORT: `${API_BASE_URL}/api/v1/save-report`,
+  ANALYZE_DOCUMENT: `${API_BASE_URL}/v1/analyze-document`,
+  HEALTH_CHECK: `${API_BASE_URL}/v1/health`,
+  GET_ANALYSIS: `${API_BASE_URL}/v1/analysis`,
+  GET_REPORTS: `${API_BASE_URL}/v1/reports`,
+  SAVE_REPORT: `${API_BASE_URL}/v1/save-report`,
 };
 
 // Validate API base URL

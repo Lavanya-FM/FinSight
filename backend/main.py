@@ -38,13 +38,12 @@ app.router.redirect_slashes = False
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://finsight-gold.vercel.app",  # Your Vercel frontend URL
-        "http://localhost:3000",  # Allow local development
-        # Add "*" for testing (insecure for production; use specific origins)
+        "https://finsight-qxrp69axd-lavanya-fms-projects.vercel.app",
+        "https://finsight-gold.vercel.app",  
     ],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods (GET, POST, etc.)
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Validate Supabase configuration

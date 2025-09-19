@@ -34,7 +34,9 @@ export const UserProvider = ({ children }) => {
       setLoading(false);
     }
   };
-
+const handleLogin = (role, userId, username, email) => {
+    setUser({ role, user_id: userId, username, email });
+  };
   const handleLogout = async (callback) => {
     try {
       const { error } = await supabase.auth.signOut();
@@ -57,7 +59,7 @@ export const UserProvider = ({ children }) => {
   }, []);
 
   return (
-    <UserContext.Provider value={{ user, isLoggedIn, loading, handleLogout }}>
+    <UserContext.Provider value={{ user, isLoggedIn, handleLogin,loading, handleLogout }}>
       {children}
     </UserContext.Provider>
   );
