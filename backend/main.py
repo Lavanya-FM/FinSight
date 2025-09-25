@@ -34,12 +34,15 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 app.router.redirect_slashes = False
 
-# Add CORS middleware
+# Add CORS middleware EARLY (before routes)
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://finsight-gold.vercel.app")  # Set in Render env vars
+# CORS Configuration: Allow localhost:3000 explicitly (safer than '*')
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://finsight-qxrp69axd-lavanya-fms-projects.vercel.app",
-        "https://finsight-gold.vercel.app",  
+        "https://finsight-2d68bzek0-lavanya-fms-projects.vercel.app",
+        "https://finsight-gold.vercel.app",
+        "http://localhost:3000",
     ],
     allow_credentials=True,
     allow_methods=["*"],
