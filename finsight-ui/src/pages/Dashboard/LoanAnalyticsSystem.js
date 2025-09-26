@@ -33,22 +33,52 @@ const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8'];
 const RISK_COLORS = { 'Low Risk': '#22C55E', 'Medium Risk': '#F59E0B', 'High Risk': '#EF4444' };
 
 // Enhanced API configuration for FastAPI backend
-const API_BASE_URL = '/api';  // Use relative path
+// Supports both local development and cloud deployment
+const getApiBaseUrl = () => {
+  // Check if we're in development mode
+  const isDevelopment = process.env.NODE_ENV === 'development';
+
+  // Get API URL from environment variables
+  const envApiUrl = process.env.REACT_APP_API_URL;
+
+  // Fallback URLs for different environments
+  const fallbackUrls = {
+    development: 'http://localhost:8000',
+    production: '', // Will be set by hosting platform
+    test: 'https://riskiq.onrender.com'
+  };
+
+  // Use environment variable if set, otherwise use fallback based on environment
+  if (envApiUrl) {
+    return envApiUrl;
+  }
+
+  // If no environment variable is set, use fallback
+  return fallbackUrls[isDevelopment ? 'development' : 'production'] || fallbackUrls.development;
+};
+
+const API_BASE_URL = getApiBaseUrl();
 const API_ENDPOINTS = {
-  ANALYZE_DOCUMENT: `${API_BASE_URL}/v1/analyze-document`,
-  HEALTH_CHECK: `${API_BASE_URL}/v1/health`,
-  GET_ANALYSIS: `${API_BASE_URL}/v1/analysis`,
-  GET_REPORTS: `${API_BASE_URL}/v1/reports`,
-  SAVE_REPORT: `${API_BASE_URL}/v1/save-report`,
+  ANALYZE_DOCUMENT: '/v1/analyze-document',
+  HEALTH_CHECK: '/v1/health',
+  GET_ANALYSIS: '/v1/analysis',
+  GET_REPORTS: '/v1/reports',
+  SAVE_REPORT: '/v1/save-report',
 };
 
 // Validate API base URL
 if (!API_BASE_URL) {
-  console.error('API configuration missing: REACT_APP_API_URL must be set');
+  console.error('API configuration missing: REACT_APP_API_URL must be set for production deployment');
+  console.warn('Using fallback configuration. Please check your environment variables.');
 }
 
 // Add debug log to verify endpoint URLs
-console.log('API_ENDPOINTS:', API_ENDPOINTS);
+console.log('API Configuration:', {
+  environment: process.env.NODE_ENV,
+  apiBaseUrl: API_BASE_URL,
+  endpoints: API_ENDPOINTS,
+  isDevelopment: process.env.NODE_ENV === 'development'
+});
 
 // Health check function (with CORS workaround for testing)
 const checkAPIHealth = async () => {
@@ -56,10 +86,17 @@ const checkAPIHealth = async () => {
     console.log('Checking API health at:', API_ENDPOINTS.HEALTH_CHECK);
     const response = await fetch(API_ENDPOINTS.HEALTH_CHECK, { method: 'GET' });
     const responseBody = await response.json().catch(() => ({}));
-    console.log('Health check response:', response.status, responseBody);
+    console.log('Health check response:', {
+      status: response.status,
+      body: responseBody,
+      headers: [...response.headers.entries()],
+    });
     return response.ok;
   } catch (error) {
-    console.warn('API health check failed:', error);
+    console.error('API health check failed:', {
+      message: error.message,
+      stack: error.stack,
+    });
     return false;
   }
 };
@@ -304,58 +341,55 @@ const deleteReport = async (reportId) => {
   }
 };
 
-// PDF Generation utility
+// Enhanced PDF Generation with Professional Design
 const generatePDFReport = async (analysisData, chartRefs) => {
   const pdf = new jsPDF('p', 'mm', 'a4');
   const pageWidth = 210;
   const pageHeight = 297;
-  const margin = 10;
+  const margin = 15;
   let yOffset = margin;
 
-  // Helper functions remain unchanged
+  // Enhanced helper functions
   const addHeader = () => {
-    pdf.setFillColor(33, 37, 41);
-    pdf.rect(0, 0, pageWidth, 20, 'F');
+    pdf.setFillColor(41, 128, 185); // Professional blue
+    pdf.rect(0, 0, pageWidth, 25, 'F');
     pdf.setTextColor(255, 255, 255);
     pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(14);
-    pdf.text('Loan Analytics Report', margin, 13);
+    pdf.setFontSize(16);
+    pdf.text('FinSight', margin, 16);
     pdf.setFontSize(10);
     pdf.setFont('helvetica', 'normal');
-    pdf.text(`Generated: ${new Date().toLocaleDateString()}`, pageWidth - margin - 50, 13);
-  };
-
-  const addFooter = (pageNum) => {
-    pdf.setTextColor(100);
-    pdf.setFontSize(8);
-    pdf.text(`Page ${pageNum} | &copy; 2025 FinSight. All rights reserved.`, pageWidth / 2, pageHeight - 5, { align: 'center' });
+    pdf.text(`Generated: ${new Date().toLocaleDateString()}`, pageWidth - margin - 60, 16);
+    pdf.text('Financial Analysis Report', pageWidth / 2, 16, { align: 'center' });
   };
 
   const addSectionTitle = (title) => {
     pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(12);
-    pdf.setTextColor(0);
+    pdf.setFontSize(14);
+    pdf.setTextColor(41, 128, 185);
     pdf.text(title.toUpperCase(), margin, yOffset);
     pdf.setLineWidth(0.5);
+    pdf.setDrawColor(41, 128, 185);
     pdf.line(margin, yOffset + 2, pageWidth - margin, yOffset + 2);
-    yOffset += 10;
+    yOffset += 12;
     if (yOffset > pageHeight - 30) {
       pdf.addPage();
       addHeader();
-      yOffset = 25;
+      yOffset = 30;
     }
   };
 
   const addParagraph = (text, fontSize = 10) => {
     pdf.setFont('helvetica', 'normal');
     pdf.setFontSize(fontSize);
+    pdf.setTextColor(60, 60, 60);
     const lines = pdf.splitTextToSize(text, pageWidth - 2 * margin);
     pdf.text(lines, margin, yOffset);
-    yOffset += (lines.length * fontSize * 0.7) + 5;
+    yOffset += (lines.length * fontSize * 0.6) + 3;
     if (yOffset > pageHeight - 30) {
       pdf.addPage();
       addHeader();
-      yOffset = 25;
+      yOffset = 30;
     }
   };
 
@@ -363,56 +397,94 @@ const generatePDFReport = async (analysisData, chartRefs) => {
     if (title) {
       addParagraph(title, 11);
     }
-    if (yOffset + (rows.length * 10) > pageHeight - 30) {
+    if (yOffset + (rows.length * 8) > pageHeight - 30) {
       pdf.addPage();
       addHeader();
-      yOffset = 25;
+      yOffset = 30;
     }
-    autoTable(pdf, {
-      head: [headers],
-      body: rows,
-      startY: yOffset,
-      margin: { left: margin, right: margin },
-      theme: 'grid',
-      styles: { fontSize: 9, cellPadding: 3, overflow: 'linebreak' },
-      headStyles: { fillColor: [33, 37, 41], textColor: 255 },
-      alternateRowStyles: { fillColor: [240, 240, 240] },
+
+    // Enhanced table styling
+    pdf.setFillColor(248, 249, 250);
+    pdf.setDrawColor(224, 224, 224);
+    pdf.setTextColor(60, 60, 60);
+
+    // Headers with enhanced styling
+    pdf.setFillColor(41, 128, 185);
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(9);
+
+    const colWidth = (pageWidth - 2 * margin) / headers.length;
+
+    headers.forEach((header, i) => {
+      pdf.rect(margin + i * colWidth, yOffset, colWidth, 8, 'FD');
+      pdf.text(header, margin + i * colWidth + 2, yOffset + 5);
     });
-    yOffset = pdf.lastAutoTable?.finalY ? pdf.lastAutoTable.finalY + 10 : yOffset + (rows.length * 10) + 10;
+
+    yOffset += 8;
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(8);
+    pdf.setTextColor(60, 60, 60);
+
+    // Rows with alternating colors and better spacing
+    rows.forEach((row, rowIndex) => {
+      const rowHeight = 6;
+      if (rowIndex % 2 === 0) {
+        pdf.setFillColor(255, 255, 255);
+      } else {
+        pdf.setFillColor(248, 249, 250);
+      }
+
+      pdf.rect(margin, yOffset, pageWidth - 2 * margin, rowHeight, 'FD');
+
+      row.forEach((cell, cellIndex) => {
+        pdf.text(String(cell), margin + cellIndex * colWidth + 2, yOffset + 4);
+      });
+
+      yOffset += rowHeight;
+    });
+
+    yOffset += 5;
   };
 
-  const addImage = async (element, title = null, maxHeight = 100) => {
-  if (!element || !element.current || element.current.offsetParent === null) {
-  console.warn(`Chart element for ${title} is not available or not rendered, skipping`);
-  addParagraph(`[Chart: ${title} could not be rendered]`, 10);
-  return;
-}
-  if (title) {
-    addSectionTitle(title);
-  }
-  if (yOffset + maxHeight > pageHeight - 30) {
-    pdf.addPage();
-    addHeader();
-    yOffset = 25;
-  }
-  try {
-    const canvas = await html2canvas(element.current, {
-      scale: 2,
-      backgroundColor: '#FFFFFF',
-      useCORS: true,
-      logging: true,
-    });
-    const imgData = canvas.toDataURL('image/png');
-    const imgProps = pdf.getImageProperties(imgData);
-    const width = pageWidth - 2 * margin;
-    const height = Math.min((imgProps.height * width) / imgProps.width, maxHeight);
-    pdf.addImage(imgData, 'PNG', margin, yOffset, width, height);
-    yOffset += height + 10;
-  } catch (error) {
-    console.error(`Failed to capture chart ${title}:`, error);
-    addParagraph(`[Error rendering chart: ${title}]`, 10);
-  }
-};
+  const addFooter = (pageNum) => {
+    pdf.setTextColor(150);
+    pdf.setFontSize(8);
+    pdf.text(`Page ${pageNum} | © 2025 FinSight - Advanced Financial Analysis Platform`, pageWidth / 2, pageHeight - 8, { align: 'center' });
+  };
+
+  const addImage = async (element, title = null, maxHeight = 80) => {
+    if (!element || !element.current || element.current.offsetParent === null) {
+      console.warn(`Chart element for ${title} is not available or not rendered, skipping`);
+      addParagraph(`[Chart: ${title} could not be rendered]`, 10);
+      return;
+    }
+    if (title) {
+      addSectionTitle(title);
+    }
+    if (yOffset + maxHeight > pageHeight - 30) {
+      pdf.addPage();
+      addHeader();
+      yOffset = 30;
+    }
+    try {
+      const canvas = await html2canvas(element.current, {
+        scale: 2,
+        backgroundColor: '#FFFFFF',
+        useCORS: true,
+        logging: false,
+      });
+      const imgData = canvas.toDataURL('image/png');
+      const imgProps = pdf.getImageProperties(imgData);
+      const width = pageWidth - 2 * margin;
+      const height = Math.min((imgProps.height * width) / imgProps.width, maxHeight);
+      pdf.addImage(imgData, 'PNG', margin, yOffset, width, height);
+      yOffset += height + 8;
+    } catch (error) {
+      console.error(`Failed to capture chart ${title}:`, error);
+      addParagraph(`[Error rendering chart: ${title}]`, 10);
+    }
+  };
 
   try {
     // Validate analysisData
@@ -420,33 +492,81 @@ const generatePDFReport = async (analysisData, chartRefs) => {
       throw new Error('Invalid analysis data structure');
     }
 
-    // Add cover page
-    pdf.setFontSize(20);
-    pdf.setTextColor(0);
-    pdf.text(`Loan Analysis Report`, pageWidth / 2, 80, { align: 'center' });
+    // Professional Cover Page with Gradient Effect
+    pdf.setFillColor(41, 128, 185);
+    pdf.rect(0, 0, pageWidth, pageHeight, 'F');
+
+    // Decorative elements
+    pdf.setFillColor(52, 152, 219);
+    pdf.circle(50, 50, 30, 'F');
+    pdf.circle(pageWidth - 50, pageHeight - 50, 25, 'F');
+    pdf.setFillColor(41, 128, 185);
+
+    // Main content with enhanced typography
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(28);
+    pdf.text('FINSIGHT', pageWidth / 2, 80, { align: 'center' });
+
+    pdf.setFontSize(18);
+    pdf.text('Financial Analysis Report', pageWidth / 2, 110, { align: 'center' });
+
     pdf.setFontSize(14);
-    pdf.text(analysisData.file_analysis?.applicant_name || 'Unknown Applicant', pageWidth / 2, 100, { align: 'center' });
+    pdf.text(`Analysis for: ${analysisData.file_analysis?.applicant_name || 'Unknown Applicant'}`, pageWidth / 2, 140, { align: 'center' });
+
     pdf.setFontSize(12);
-    pdf.text(`CIBIL Score: ${analysisData.financial_metrics?.cibil_score || 'N/A'}`, pageWidth / 2, 120, { align: 'center' });
-    pdf.text(`Final Decision: ${analysisData.decision_summary?.final_decision || 'N/A'}`, pageWidth / 2, 135, { align: 'center' });
+    pdf.text(`CIBIL Score: ${analysisData.financial_metrics?.cibil_score || 'N/A'}`, pageWidth / 2, 165, { align: 'center' });
+    pdf.text(`Decision: ${analysisData.decision_summary?.final_decision || 'N/A'}`, pageWidth / 2, 180, { align: 'center' });
+    pdf.text(`Risk Level: ${analysisData.risk_assessment?.risk_category || 'N/A'}`, pageWidth / 2, 195, { align: 'center' });
+
+    // Date and version with professional styling
+    pdf.setFontSize(10);
+    pdf.text(`Report Generated: ${new Date().toLocaleDateString()}`, pageWidth / 2, 240, { align: 'center' });
+    pdf.text('Version 2.0 - Advanced Analytics', pageWidth / 2, 255, { align: 'center' });
+
     addFooter(1);
 
-    // Page 2: Executive Summary
+    // Page 2: Executive Summary with enhanced design
     pdf.addPage();
     addHeader();
-    yOffset = 25;
-    addSectionTitle('Executive Summary');
-    addParagraph(`Applicant: ${analysisData.file_analysis?.applicant_name || 'N/A'}`);
-    addParagraph(`File Analyzed: ${analysisData.file_analysis?.file_name || 'N/A'}`);
-    addParagraph(`Final Decision: ${analysisData.decision_summary?.final_decision || 'N/A'}`);
-    addParagraph(`Reason: ${analysisData.decision_summary?.reason || 'N/A'}`);
-    addParagraph(`Confidence Score: ${analysisData.decision_summary?.confidence_score ? (parseFloat(analysisData.decision_summary.confidence_score) * 100).toFixed(1) + '%' : 'N/A'}`);
-    addParagraph(`Recommended Loan Amount: ${analysisData.decision_summary?.recommended_loan_amount || 'N/A'}`);
-    addParagraph(`Interest Rate Bracket: ${analysisData.decision_summary?.interest_rate_bracket || 'N/A'}`);
-    addParagraph(`Risk Category: ${analysisData.risk_assessment?.risk_category || 'N/A'}`);
+    yOffset = 35;
 
-    // Key Financial Metrics Table
-    addSectionTitle('Key Financial Metrics');
+    // Summary box with gradient effect
+    pdf.setFillColor(248, 249, 250);
+    pdf.roundedRect(margin, yOffset, pageWidth - 2 * margin, 60, 3, 3, 'F');
+
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(14);
+    pdf.setTextColor(41, 128, 185);
+    pdf.text('EXECUTIVE SUMMARY', margin + 5, yOffset + 12);
+
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(10);
+    pdf.setTextColor(60, 60, 60);
+    yOffset += 18;
+
+    const summaryData = [
+      ['Applicant Name', analysisData.file_analysis?.applicant_name || 'N/A'],
+      ['Document Analyzed', analysisData.file_analysis?.file_name || 'N/A'],
+      ['Final Decision', analysisData.decision_summary?.final_decision || 'N/A'],
+      ['Confidence Level', analysisData.decision_summary?.confidence_score ? `${(parseFloat(analysisData.decision_summary.confidence_score) * 100).toFixed(1)}%` : 'N/A'],
+      ['Recommended Amount', analysisData.decision_summary?.recommended_loan_amount || 'N/A'],
+      ['Risk Category', analysisData.risk_assessment?.risk_category || 'N/A'],
+    ];
+
+    summaryData.forEach(([label, value]) => {
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(9);
+      pdf.text(`${label}:`, margin + 10, yOffset);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(String(value), margin + 80, yOffset);
+      yOffset += 6;
+    });
+
+    yOffset += 10;
+
+    // Enhanced Financial Metrics Table
+    addSectionTitle('Financial Overview');
     const metricsTable = [
       ['Monthly Income', analysisData.financial_metrics?.monthly_income ? `₹${analysisData.financial_metrics.monthly_income.toLocaleString()}` : 'N/A'],
       ['Monthly Expenses', analysisData.financial_metrics?.monthly_expenses ? `₹${analysisData.financial_metrics.monthly_expenses.toLocaleString()}` : 'N/A'],
@@ -454,30 +574,29 @@ const generatePDFReport = async (analysisData, chartRefs) => {
       ['Savings Rate', analysisData.financial_metrics?.savings_rate ? `${analysisData.financial_metrics.savings_rate}%` : 'N/A'],
       ['Debt-to-Income Ratio', analysisData.financial_metrics?.debt_to_income_ratio ? `${analysisData.financial_metrics.debt_to_income_ratio}%` : 'N/A'],
       ['Average Balance', analysisData.financial_metrics?.average_balance ? `₹${analysisData.financial_metrics.average_balance.toLocaleString()}` : 'N/A'],
-      ['Total Transactions', analysisData.financial_metrics?.total_transactions || 'N/A'],
-      ['Income Variability', analysisData.financial_metrics?.income_variability || 'N/A'],
-      ['Income Stability Index', analysisData.additional_insights?.income_stability_index ? `${analysisData.additional_insights.income_stability_index}/100` : 'N/A'],
-      ['Expense Volatility Score', analysisData.additional_insights?.expense_volatility_score ? `${analysisData.additional_insights.expense_volatility_score}/100` : 'N/A'],
-      ['Loan Affordability Ratio', analysisData.additional_insights?.loan_affordability_ratio ? `${analysisData.additional_insights.loan_affordability_ratio}%` : 'N/A'],
     ];
     addTable(['Metric', 'Value'], metricsTable);
 
-    // Risk Assessment Table
-    addSectionTitle('Risk Assessment');
+    // Risk Assessment Section with enhanced styling
+    addSectionTitle('Risk Assessment & Compliance');
     addParagraph(`Overall Risk Score: ${analysisData.risk_assessment?.overall_risk_score || 'N/A'}/100`);
     addParagraph(`Risk Category: ${analysisData.risk_assessment?.risk_category || 'N/A'}`);
-    const riskTable = (analysisData.risk_assessment?.risk_factors || []).map(f => [f.factor || 'N/A', f.score || 'N/A']);
-    addTable(['Risk Factor', 'Score'], riskTable);
 
-    // Compliance Checks Table
-    addSectionTitle('Compliance and Security Verification');
+    const riskTable = (analysisData.risk_assessment?.risk_factors || []).map(f => [f.factor || 'N/A', `${f.score || 'N/A'}/100`]);
+    if (riskTable.length > 0) {
+      addTable(['Risk Factor', 'Score'], riskTable);
+    }
+
+    // Compliance Checks with enhanced design
     const complianceTable = [
       ['AML Status', analysisData.compliance_checks?.aml_status || 'N/A'],
-      ['Fraud Indicators', analysisData.compliance_checks?.fraud_indicators ? `${analysisData.compliance_checks.fraud_indicators} detected` : 'N/A'],
+      ['Document Authenticity', analysisData.compliance_checks?.document_authenticity || 'N/A'],
+      ['Identity Verification', analysisData.compliance_checks?.identity_verification || 'N/A'],
+      ['Fraud Indicators', analysisData.compliance_checks?.fraud_indicators ? `${analysisData.compliance_checks.fraud_indicators} detected` : '0 detected'],
     ];
-    addTable(['Check', 'Status'], complianceTable);
+    addTable(['Compliance Check', 'Status'], complianceTable);
 
-    // Detailed Analysis Table
+    // Detailed Analysis Table with enhanced styling
     addSectionTitle('Detailed Financial Analysis');
     const detailedTable = [
       ['Account Stability', analysisData.detailed_analysis?.account_stability || 'N/A'],
@@ -488,74 +607,85 @@ const generatePDFReport = async (analysisData, chartRefs) => {
     ];
     addTable(['Indicator', 'Value'], detailedTable);
 
-    // Fix: Use analysisData instead of result
-    const financialRatiosData = analysisData.chart_data?.financial_ratios ? [
-      { name: 'Savings Rate', value: analysisData.financial_metrics?.savings_rate || 0 },
-      { name: 'Debt-to-Income', value: analysisData.financial_metrics?.debt_to_income_ratio || 0 },
-    ] : [];
-
-    // Additional Insights
-    addSectionTitle('Additional Financial Insights');
+    // Additional Insights with enhanced design
+    addSectionTitle('Advanced Financial Insights');
     const insightsTable = [
       ['Income Stability Index', analysisData.additional_insights?.income_stability_index ? `${analysisData.additional_insights.income_stability_index}/100` : 'N/A'],
       ['Expense Volatility Score', analysisData.additional_insights?.expense_volatility_score ? `${analysisData.additional_insights.expense_volatility_score}/100` : 'N/A'],
       ['Loan Affordability Ratio', analysisData.additional_insights?.loan_affordability_ratio ? `${analysisData.additional_insights.loan_affordability_ratio}%` : 'N/A'],
     ];
     addTable(['Insight', 'Value'], insightsTable);
-    addParagraph('Summary of Insights:');
-    analysisData.additional_insights?.insights_summary.forEach(insight => addParagraph(`• ${insight}`));
 
-    // Charts Section
+    if (analysisData.additional_insights?.insights_summary?.length > 0) {
+      addParagraph('Key Insights:');
+      analysisData.additional_insights.insights_summary.forEach(insight => addParagraph(`• ${insight}`));
+    }
+
+    // Charts Section - Full Page Layout with enhanced presentation
     pdf.addPage();
     addHeader();
-    yOffset = 25;
-    addSectionTitle('Data Visualizations and Insights');
+    yOffset = 35;
+    addSectionTitle('Data Visualizations');
 
-    // Validate chart data before rendering
-    if (analysisData.chart_data?.monthly_trends?.length > 0) {
-      await addImage(chartRefs.monthlyTrendRef, 'Monthly Income vs Expenses Trend');
-      addParagraph('Insight: The trend shows consistent income with controlled expenses, indicating good financial stability.');
-    } else {
-      addParagraph('[No data available for Monthly Income vs Expenses Trend]', 10);
+    // Enhanced chart presentation with better spacing and insights
+    const chartsToInclude = [
+      { ref: chartRefs.monthlyTrendRef, title: 'Monthly Income vs Expenses Trend', data: analysisData.chart_data?.monthly_trends },
+      { ref: chartRefs.categoryPieRef, title: 'Category-wise Expense Breakdown', data: analysisData.chart_data?.category_breakdown },
+      { ref: chartRefs.riskFactorRef, title: 'Risk Factor Analysis', data: analysisData.risk_assessment?.risk_factors },
+      { ref: chartRefs.transactionVolumeRef, title: 'Transaction Volume Over Time', data: analysisData.chart_data?.transaction_volume },
+    ];
+
+    for (const chart of chartsToInclude) {
+      if (chart.data && chart.data.length > 0) {
+        await addImage(chart.ref, chart.title, 70);
+        addParagraph(`Insight: Comprehensive analysis of ${chart.title.toLowerCase()} reveals important patterns in financial behavior.`);
+      } else {
+        addParagraph(`[Chart: ${chart.title} - No data available]`, 10);
+      }
     }
 
-    if (analysisData.chart_data?.category_breakdown?.length > 0) {
-      await addImage(chartRefs.categoryPieRef, 'Category-wise Expense Breakdown');
-      addParagraph('Insight: Housing and food dominate expenses, suggesting potential areas for cost optimization.');
-    } else {
-      addParagraph('[No data available for Category-wise Expense Breakdown]', 10);
+    // Financial Ratios Chart (if available) with enhanced styling
+    if (chartRefs.financialRatiosRef && analysisData.chart_data?.financial_ratios?.length > 0) {
+      await addImage(chartRefs.financialRatiosRef, 'Key Financial Ratios', 70);
+      addParagraph('Insight: Financial ratios provide a clear picture of overall financial health and stability.');
     }
 
-    if (analysisData.risk_assessment?.risk_factors?.length > 0) {
-      await addImage(chartRefs.riskFactorRef, 'Risk Factor Analysis (Radar Chart)');
-      addParagraph('Insight: Low risk in income stability but higher in debt load, recommending debt reduction strategies.');
-    } else {
-      addParagraph('[No data available for Risk Factor Analysis]', 10);
-    }
-
-    if (analysisData.chart_data?.transaction_volume?.length > 0) {
-      await addImage(chartRefs.transactionVolumeRef, 'Transaction Volume Over Time');
-      addParagraph('Insight: Steady transaction volume with no unusual spikes, indicating normal activity.');
-    } else {
-      addParagraph('[No data available for Transaction Volume Over Time]', 10);
-    }
-
-    if (chartRefs.financialRatiosRef && financialRatiosData.length > 0) {
-      await addImage(chartRefs.financialRatiosRef, 'Key Financial Ratios');
-      addParagraph('Insight: Balanced ratios indicate strong financial health.');
-    } else {
-      addParagraph('[No data available for Key Financial Ratios]', 10);
-    }
-
-    // Recommendations
+    // Recommendations Section with enhanced design
     pdf.addPage();
     addHeader();
-    yOffset = 25;
-    addSectionTitle('Recommendations and Insights');
-    addParagraph('Based on the analysis, the following recommendations are provided to improve financial health or mitigate risks:');
+    yOffset = 35;
+    addSectionTitle('Expert Recommendations');
+
+    // Recommendation box with enhanced styling
+    pdf.setFillColor(248, 249, 250);
+    pdf.roundedRect(margin, yOffset, pageWidth - 2 * margin, 40, 3, 3, 'F');
+
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(10);
+    pdf.setTextColor(60, 60, 60);
+    yOffset += 8;
+
+    addParagraph('Based on comprehensive analysis of financial data, banking behavior, and risk assessment, the following recommendations are provided:');
+    yOffset += 5;
+
     (analysisData.recommendations || []).forEach((rec, idx) => {
+      pdf.setFillColor(41, 128, 185);
+      pdf.circle(margin + 3, yOffset - 2, 1.5, 'F');
       addParagraph(`${idx + 1}. ${rec || 'N/A'}`);
     });
+
+    // Final Decision Summary with enhanced styling
+    addSectionTitle('Final Decision Summary');
+    pdf.setFillColor(46, 204, 113);
+    pdf.roundedRect(margin, yOffset, pageWidth - 2 * margin, 25, 3, 3, 'F');
+
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(12);
+    pdf.text(`FINAL DECISION: ${analysisData.decision_summary?.final_decision || 'PENDING'}`, pageWidth / 2, yOffset + 10, { align: 'center' });
+    pdf.text(`Confidence: ${analysisData.decision_summary?.confidence_score ? (parseFloat(analysisData.decision_summary.confidence_score) * 100).toFixed(1) + '%' : 'N/A'}`, pageWidth / 2, yOffset + 18, { align: 'center' });
+
+    yOffset += 35;
 
     // Add footers to all pages
     const pages = pdf.internal.getNumberOfPages();
@@ -564,21 +694,21 @@ const generatePDFReport = async (analysisData, chartRefs) => {
       addFooter(i);
     }
 
-    // Save PDF
-    const filename = `loan_analysis_report_${analysisData.file_analysis?.applicant_name || 'unknown'}_${Date.now()}.pdf`;
+    // Save PDF with professional filename
+    const filename = `FinSight_Report_${analysisData.file_analysis?.applicant_name?.replace(/\s+/g, '_') || 'Analysis'}_${Date.now()}.pdf`;
     pdf.save(filename);
 
     return {
       success: true,
       filename,
       size: pdf.output('blob').size,
+      pages: pages
     };
   } catch (error) {
     console.error('PDF generation failed:', error);
     throw new Error(`Failed to generate PDF: ${error.message}`);
   }
 };
-
 // Chart Components
 const MonthlyTrendChart = ({ data = [] }) => {
   if (!data.length) return <div>No data available for Monthly Trends</div>;
@@ -714,19 +844,29 @@ const LoanAnalyticsSystem = () => {
     };
     getUser();
     
-    const verifyAPI = async () => {
-      if (!API_BASE_URL) {
-        alert('API configuration is missing. Please contact support.');
-        return;
-      }
-      const isHealthy = await checkAPIHealth();
-      if (!isHealthy) {
-        console.error('API health check failed. Please ensure the backend server is running.');
+  const verifyAPI = async () => {
+    if (!API_BASE_URL) {
+      console.error('API configuration is missing. Please contact support.');
+      alert('API configuration is missing. Please contact support.');
+      return;
+    }
+
+    // Skip health check in production to avoid unnecessary API calls
+    if (process.env.NODE_ENV === 'production') {
+      console.log('Production environment detected, skipping health check');
+      return;
+    }
+
+    const isHealthy = await checkAPIHealth();
+    if (!isHealthy) {
+      console.error('API health check failed. Please ensure the backend server is running.');
+      if (process.env.NODE_ENV === 'development') {
         alert('Cannot connect to the analysis server. Please try again later.');
-      } else {
-        console.log('API health check passed');
       }
-    };
+    } else {
+      console.log('API health check passed');
+    }
+  };
     verifyAPI();
     const loadReports = async () => {
       if (currentView === 'reports') {
@@ -1002,20 +1142,20 @@ const LoanAnalyticsSystem = () => {
                       <div className="flex-1">
                         <div className="flex items-center space-x-4">
                           <div>
-                            <h3 className="font-semibold text-gray-900">{report.file_analysis.applicant_name || 'Unknown Applicant'}</h3>
+                            <h3 className="font-semibold text-gray-900">{report.file_analysis?.applicant_name || 'Unknown Applicant'}</h3>
                             <p className="text-sm text-gray-600">
-                              {report.file_analysis.file_name} • Generated {new Date(report.generated_at).toLocaleDateString()}
+                              {report.file_analysis?.file_name || 'N/A'} • Generated {new Date(report.generated_at).toLocaleDateString()}
                             </p>
                           </div>
-                          <div className={`px-3 py-1 rounded-full text-sm font-medium ${getDecisionColor(report.decision_summary.final_decision)}`}>
-                            {report.decision_summary.final_decision}
+                          <div className={`px-3 py-1 rounded-full text-sm font-medium ${getDecisionColor(report?.decision_summary?.final_decision)}`}>
+                            {report?.decision_summary?.final_decision || 'PENDING'}
                           </div>
                           <div className="text-right">
                             <div className="text-lg font-bold text-blue-600">
-                              CIBIL: {report.financial_metrics.cibil_score}
+                              CIBIL: {report?.financial_metrics?.cibil_score || 'N/A'}
                             </div>
-                            <div className={`text-sm font-medium`} style={{color: getRiskColor(report.risk_assessment.risk_category)}}>
-                              {report.risk_assessment.risk_category}
+                            <div className={`text-sm font-medium`} style={{color: getRiskColor(report?.risk_assessment?.risk_category)}}>
+                              {report?.risk_assessment?.risk_category || 'Unknown'}
                             </div>
                           </div>
                         </div>
@@ -1058,25 +1198,25 @@ const LoanAnalyticsSystem = () => {
                             <div className="grid grid-cols-2 gap-3">
                               <div className="bg-blue-50 p-3 rounded-lg">
                                 <div className="text-2xl font-bold text-blue-600">
-                                  ₹{report.financial_metrics.monthly_income.toLocaleString()}
+                                  ₹{report?.financial_metrics?.monthly_income?.toLocaleString() || '0'}
                                 </div>
                                 <div className="text-sm text-blue-700">Monthly Income</div>
                               </div>
                               <div className="bg-green-50 p-3 rounded-lg">
                                 <div className="text-2xl font-bold text-green-600">
-                                  {report.financial_metrics.savings_rate}%
+                                  {report?.financial_metrics?.savings_rate || '0'}%
                                 </div>
                                 <div className="text-sm text-green-700">Savings Rate</div>
                               </div>
                               <div className="bg-purple-50 p-3 rounded-lg">
                                 <div className="text-2xl font-bold text-purple-600">
-                                  {report.financial_metrics.debt_to_income_ratio}%
+                                  {report?.financial_metrics?.debt_to_income_ratio || '0'}%
                                 </div>
                                 <div className="text-sm text-purple-700">DTI Ratio</div>
                               </div>
                               <div className="bg-orange-50 p-3 rounded-lg">
                                 <div className="text-2xl font-bold text-orange-600">
-                                  {report.risk_assessment.overall_risk_score}
+                                  {report?.risk_assessment?.overall_risk_score || 'N/A'}
                                 </div>
                                 <div className="text-sm text-orange-700">Risk Score</div>
                               </div>
@@ -1087,13 +1227,13 @@ const LoanAnalyticsSystem = () => {
                             <h4 className="font-semibold text-gray-900 mb-3">Decision Analysis</h4>
                             <div className="bg-gray-50 p-4 rounded-lg">
                               <p className="text-sm text-gray-700 mb-2">
-                                <strong>Reason:</strong> {report.decision_summary.reason}
+                                <strong>Reason:</strong> {report?.decision_summary?.reason || 'N/A'}
                               </p>
                               <p className="text-sm text-gray-700 mb-2">
-                                <strong>Confidence:</strong> {(parseFloat(report.decision_summary.confidence_score) * 100).toFixed(1)}%
+                                <strong>Confidence:</strong> {report?.decision_summary?.confidence_score ? (parseFloat(report.decision_summary.confidence_score) * 100).toFixed(1) + '%' : 'N/A'}
                               </p>
                               <p className="text-sm text-gray-700">
-                                <strong>Recommended Amount:</strong> {report.decision_summary.recommended_loan_amount}
+                                <strong>Recommended Amount:</strong> {report?.decision_summary?.recommended_loan_amount || 'N/A'}
                               </p>
                             </div>
                           </div>
@@ -1104,24 +1244,24 @@ const LoanAnalyticsSystem = () => {
                           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                             <div className="bg-white border rounded-lg p-4" ref={monthlyTrendRef}>
                               <h5 className="font-medium text-gray-900 mb-3">Monthly Trends</h5>
-                              <MonthlyTrendChart data={report.chart_data.monthly_trends} />
+                              <MonthlyTrendChart data={report?.chart_data?.monthly_trends || []} />
                             </div>
                             <div className="bg-white border rounded-lg p-4" ref={categoryPieRef}>
                               <h5 className="font-medium text-gray-900 mb-3">Category Breakdown</h5>
-                              <CategoryPieChart data={report.chart_data.category_breakdown} />
+                              <CategoryPieChart data={report?.chart_data?.category_breakdown || []} />
                             </div>
                             <div className="bg-white border rounded-lg p-4" ref={riskFactorRef}>
                               <h5 className="font-medium text-gray-900 mb-3">Risk Factors</h5>
-                              <RiskFactorChart data={report.risk_assessment.risk_factors} />
+                              <RiskFactorChart data={report?.risk_assessment?.risk_factors || []} />
                             </div>
                             <div className="bg-white border rounded-lg p-4" ref={transactionVolumeRef}>
                               <h5 className="font-medium text-gray-900 mb-3">Transaction Volume</h5>
-                              <TransactionVolumeChart data={report.chart_data.transaction_volume} />
+                              <TransactionVolumeChart data={report?.chart_data?.transaction_volume || []} />
                             </div>
-                            {result.chart_data.financial_ratios && (
+                            {report?.chart_data?.financial_ratios && (
                             <div className="bg-gray-50 border rounded-lg p-4" ref={financialRatiosRef}>
                               <h5 className="font-medium text-gray-900 mb-3">Key Financial Ratios</h5>
-                              <FinancialRatiosChart data={result.chart_data.financial_ratios} />
+                              <FinancialRatiosChart data={report?.chart_data?.financial_ratios || []} />
                             </div>
                           )}
                           </div>
@@ -1131,12 +1271,12 @@ const LoanAnalyticsSystem = () => {
                           <h4 className="font-semibold text-gray-900 mb-3">Recommendations</h4>
                           <div className="bg-blue-50 rounded-lg p-4">
                             <ul className="space-y-2">
-                              {report.recommendations.map((rec, idx) => (
+                              {report?.recommendations?.map((rec, idx) => (
                                 <li key={idx} className="flex items-start">
                                   <CheckCircle className="h-4 w-4 text-blue-600 mr-2 mt-0.5 flex-shrink-0" />
                                   <span className="text-sm text-blue-800">{rec}</span>
                                 </li>
-                              ))}
+                              )) || <li className="text-sm text-gray-600">No recommendations available</li>}
                             </ul>
                           </div>
                         </div>
@@ -1325,19 +1465,19 @@ const LoanAnalyticsSystem = () => {
                   </div>
                 </div>
 
-                {analysisResults.map((result, index) => (
+                {Array.isArray(analysisResults) && analysisResults.length > 0 && analysisResults.map((result, index) => (
                   <div key={index} className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
                     <div className="bg-gradient-to-r from-blue-50 to-purple-50 px-6 py-4 border-b border-gray-200">
                       <div className="flex items-center justify-between">
                         <div>
                           <h3 className="text-lg font-semibold text-gray-900">
-                            Analysis Report - {result.file_analysis.applicant_name || 'Unknown Applicant'}
+                            Analysis Report - {result.file_analysis?.applicant_name || 'Unknown Applicant'}
                           </h3>
-                          <p className="text-sm text-gray-600">{result.file_analysis.file_name}</p>
+                          <p className="text-sm text-gray-600">{result.file_analysis?.file_name || 'N/A'}</p>
                         </div>
                         <div className="flex items-center space-x-4">
-                          <div className={`px-4 py-2 rounded-full font-medium border ${getDecisionColor(result.decision_summary.final_decision)}`}>
-                            {result.decision_summary.final_decision}
+                          <div className={`px-4 py-2 rounded-full font-medium border ${getDecisionColor(result?.decision_summary?.final_decision)}`}>
+                            {result?.decision_summary?.final_decision || 'PENDING'}
                           </div>
                           <button
                             onClick={() => handleDownloadPDF(result, index)}
@@ -1355,33 +1495,33 @@ const LoanAnalyticsSystem = () => {
                         <div className="bg-blue-50 p-4 rounded-lg text-center border border-blue-100">
                           <DollarSign className="h-8 w-8 text-blue-600 mx-auto mb-2" />
                           <div className="text-2xl font-bold text-blue-600">
-                            {result.financial_metrics.cibil_score}
+                            {result?.financial_metrics?.cibil_score || 'N/A'}
                           </div>
                           <div className="text-sm text-blue-700">CIBIL Score</div>
                         </div>
                         <div className="bg-green-50 p-4 rounded-lg text-center border border-green-100">
                           <TrendingUp className="h-8 w-8 text-green-600 mx-auto mb-2" />
                           <div className="text-2xl font-bold text-green-600">
-                            ₹{result.financial_metrics.monthly_income.toLocaleString()}
+                            ₹{result?.financial_metrics?.monthly_income?.toLocaleString() || '0'}
                           </div>
                           <div className="text-sm text-green-700">Monthly Income</div>
                         </div>
                         <div className="bg-purple-50 p-4 rounded-lg text-center border border-purple-100">
                           <Target className="h-8 w-8 text-purple-600 mx-auto mb-2" />
                           <div className="text-2xl font-bold text-purple-600">
-                            {result.financial_metrics.savings_rate}%
+                            {result?.financial_metrics?.savings_rate || '0'}%
                           </div>
                           <div className="text-sm text-purple-700">Savings Rate</div>
                         </div>
                         <div className="p-4 rounded-lg text-center border" style={{
-                          backgroundColor: `${getRiskColor(result.risk_assessment.risk_category)}15`,
-                          borderColor: `${getRiskColor(result.risk_assessment.risk_category)}40`
+                          backgroundColor: `${getRiskColor(result?.risk_assessment?.risk_category)}15`,
+                          borderColor: `${getRiskColor(result?.risk_assessment?.risk_category)}40`
                         }}>
-                          <Shield className="h-8 w-8 mx-auto mb-2" style={{color: getRiskColor(result.risk_assessment.risk_category)}} />
-                          <div className="text-lg font-bold" style={{color: getRiskColor(result.risk_assessment.risk_category)}}>
-                            {result.risk_assessment.risk_category}
+                          <Shield className="h-8 w-8 mx-auto mb-2" style={{color: getRiskColor(result?.risk_assessment?.risk_category)}} />
+                          <div className="text-lg font-bold" style={{color: getRiskColor(result?.risk_assessment?.risk_category)}}>
+                            {result?.risk_assessment?.risk_category || 'Unknown'}
                           </div>
-                          <div className="text-sm" style={{color: `${getRiskColor(result.risk_assessment.risk_category)}CC`}}>Risk Level</div>
+                          <div className="text-sm" style={{color: `${getRiskColor(result?.risk_assessment?.risk_category)}CC`}}>Risk Level</div>
                         </div>
                       </div>
 
@@ -1393,19 +1533,19 @@ const LoanAnalyticsSystem = () => {
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                           <div className="bg-gray-50 border rounded-lg p-4" ref={monthlyTrendRef}>
                             <h5 className="font-medium text-gray-900 mb-3">Monthly Income vs Expenses Trend</h5>
-                            <MonthlyTrendChart data={result.chart_data.monthly_trends} />
+                            <MonthlyTrendChart data={result?.chart_data?.monthly_trends || []} />
                           </div>
                           <div className="bg-gray-50 border rounded-lg p-4" ref={categoryPieRef}>
                             <h5 className="font-medium text-gray-900 mb-3">Expense Category Breakdown</h5>
-                            <CategoryPieChart data={result.chart_data.category_breakdown} />
+                            <CategoryPieChart data={result?.chart_data?.category_breakdown || []} />
                           </div>
                           <div className="bg-gray-50 border rounded-lg p-4" ref={riskFactorRef}>
                             <h5 className="font-medium text-gray-900 mb-3">Risk Factor Analysis</h5>
-                            <RiskFactorChart data={result.risk_assessment.risk_factors} />
+                            <RiskFactorChart data={result?.risk_assessment?.risk_factors || []} />
                           </div>
                           <div className="bg-gray-50 border rounded-lg p-4" ref={transactionVolumeRef}>
                             <h5 className="font-medium text-gray-900 mb-3">Transaction Volume Trend</h5>
-                            <TransactionVolumeChart data={result.chart_data.transaction_volume} />
+                            <TransactionVolumeChart data={result?.chart_data?.transaction_volume || []} />
                           </div>
                         </div>
                       </div>
@@ -1419,37 +1559,37 @@ const LoanAnalyticsSystem = () => {
                           <div className="space-y-3">
                             <div className="flex justify-between">
                               <span className="text-gray-600">Decision:</span>
-                              <span className={`font-medium ${result.decision_summary.final_decision === 'APPROVED' ? 'text-green-600' : 'text-red-600'}`}>
-                                {result.decision_summary.final_decision}
+                              <span className={`font-medium ${result?.decision_summary?.final_decision === 'APPROVED' ? 'text-green-600' : 'text-red-600'}`}>
+                                {result?.decision_summary?.final_decision || 'PENDING'}
                               </span>
                             </div>
                             <div className="flex justify-between">
                               <span className="text-gray-600">Confidence:</span>
-                              <span className="font-medium">{(parseFloat(result.decision_summary.confidence_score) * 100).toFixed(1)}%</span>
+                              <span className="font-medium">{result?.decision_summary?.confidence_score ? (parseFloat(result.decision_summary.confidence_score) * 100).toFixed(1) + '%' : 'N/A'}</span>
                             </div>
                             <div className="flex justify-between">
                               <span className="text-gray-600">Risk Score:</span>
-                              <span className="font-medium">{result.risk_assessment.overall_risk_score}/100</span>
+                              <span className="font-medium">{result?.risk_assessment?.overall_risk_score || 'N/A'}/100</span>
                             </div>
                           </div>
                           <div className="space-y-3">
                             <div className="flex justify-between">
                               <span className="text-gray-600">Recommended Amount:</span>
-                              <span className="font-medium text-blue-600">{result.decision_summary.recommended_loan_amount}</span>
+                              <span className="font-medium text-blue-600">{result?.decision_summary?.recommended_loan_amount || 'N/A'}</span>
                             </div>
                             <div className="flex justify-between">
                               <span className="text-gray-600">Interest Rate:</span>
-                              <span className="font-medium">{result.decision_summary.interest_rate_bracket}</span>
+                              <span className="font-medium">{result?.decision_summary?.interest_rate_bracket || 'N/A'}</span>
                             </div>
                             <div className="flex justify-between">
                               <span className="text-gray-600">Processing Time:</span>
-                              <span className="font-medium">{result.file_analysis.processing_time}</span>
+                              <span className="font-medium">{result.file_analysis?.processing_time || 'N/A'}</span>
                             </div>
                           </div>
                         </div>
                         <div className="mt-4 p-3 bg-white rounded border-l-4 border-blue-400">
                           <p className="text-sm text-gray-700">
-                            <strong>Analysis Summary:</strong> {result.decision_summary.reason}
+                            <strong>Analysis Summary:</strong> {result?.decision_summary?.reason || 'Analysis in progress...'}
                           </p>
                         </div>
                       </div>
@@ -1602,7 +1742,7 @@ const LoanAnalyticsSystem = () => {
                             <h5 className="font-medium text-gray-800 mb-2">Complete Analysis Metadata</h5>
                             <pre className="text-xs text-gray-700 overflow-x-auto whitespace-pre-wrap bg-white p-3 rounded border max-h-32 overflow-y-auto">
                               {JSON.stringify({
-                                file_analysis: result.file_analysis,
+                                file_analysis: result.file_analysis || {},
                                 generated_at: result.generated_at,
                                 analysis_version: result.analysis_version
                               }, null, 2)}

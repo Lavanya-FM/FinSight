@@ -3,6 +3,14 @@
     {
       "source": "/manifest.json",
       "destination": "/manifest.json"
+    },
+    {
+      "source": "/icon-(.*).png",
+      "destination": "/icon-$1.png"
+    },
+    {
+      "source": "/api/(.*)",
+      "destination": "https://riskiq.onrender.com/api/$1"
     }
   ]
 }

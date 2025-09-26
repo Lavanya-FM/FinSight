@@ -42,7 +42,7 @@ app.add_middleware(
     allow_origins=[
         "https://finsight-2d68bzek0-lavanya-fms-projects.vercel.app",
         "https://finsight-gold.vercel.app",
-        "http://localhost:3000",
+        "https://localhost:3000",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -93,7 +93,9 @@ async def read_root():
                 "/api/v1/reports",
                 "/api/v1/predict",
                 "/api/v1/analyze-document",
-                "/api/v1/save-report"
+                "/api/v1/save-report",
+                "/api/v1/analysis"
+                
             ]
         }
     )
@@ -103,9 +105,6 @@ async def health_check():
     logger.info("Health check endpoint called")
     return {"status": "ok"}
 
-@app.options("/api/v1/analyze-document")  # Explicit OPTIONS handler (optional, middleware should cover)
-async def options_handler():
-    return {}
 
 @app.get("/api/v1/analysis")
 async def get_analysis():
@@ -388,16 +387,13 @@ class Settings(BaseModel):
 # In-memory storage (replace with DB)
 stored_settings = {"notifications": True, "theme": "light"}
 
-@app.get("/api/settings")
-async def get_settings():
-    return stored_settings
-
 @app.put("/api/settings")
 async def update_settings(settings: Settings):
     global stored_settings
     stored_settings = settings.dict()
     print(f"Updated settings: {stored_settings}")  # Debug log
     return {"message": "Settings updated successfully", "settings": stored_settings}
+
 
 @app.post("/api/v1/analyze-document")
 async def analyze(

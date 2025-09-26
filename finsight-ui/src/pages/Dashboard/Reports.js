@@ -1,10 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.REACT_APP_SUPABASE_URL,
-  process.env.REACT_APP_SUPABASE_ANON_KEY
-);
+import { supabase } from '../../supabase.js';
 
 const Reports = ({ backendUrl }) => {
   const [reports, setReports] = useState([]);
@@ -12,7 +7,7 @@ const Reports = ({ backendUrl }) => {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    console.log('Backend URL:', backendUrl);
+    console.log('Reports component mounted, fetching reports...');
     fetchReports();
   }, []);
 
@@ -23,10 +18,11 @@ const Reports = ({ backendUrl }) => {
         throw new Error('No user session found. Please log in.');
       }
       const token = session.access_token;
-      console.log('Fetching reports from:', `${backendUrl}/api/v1/reports`);
+      console.log('Fetching reports from: /v1/reports');
       console.log('Using token:', token.substring(0, 20) + '...');
 
-      const response = await fetch(`${backendUrl}/api/v1/reports`, {
+      // Use relative path to go through the proxy
+      const response = await fetch('/v1/reports', {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

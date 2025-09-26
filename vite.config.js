@@ -5,12 +5,11 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/api': {
-        target: 'https://riskiq.onrender.com',
+      '/v1': {
+        target: 'http://localhost:8000',
         changeOrigin: true,
-        secure: true,
-        // FIX: No rewrite needed if backend is /api/v1 (e.g., /api/v1/health -> https://riskiq.onrender.com/api/v1/health)
-        // If backend root is /v1, uncomment: rewrite: (path) => path.replace(/^\/api/, '/v1'),
+        secure: false,
+        rewrite: (path) => path.replace(/^\/v1/, '/api/v1'),
         configure: (proxy, options) => {
           // LOG: Debug proxy triggers
           proxy.on('proxyReq', (proxyReq, req, res) => {
